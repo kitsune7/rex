@@ -1,10 +1,10 @@
 import sys
+from tts import load_voice, speak_text
 
 
 def main():
-    print("Hello from rex!")
+    speak_text("Testing, testing...", load_voice())
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

@@ -1,0 +1,19 @@
+from piper import PiperVoice
+import sounddevice as sd
+
+models = {
+    "danny": "en_US-danny-low.onnx",
+    "joe": "en_US-joe-medium.onnx",
+    "hfc_male": "en_US-hfc_male-medium.onnx",
+}
+
+
+def load_voice(voice_model="danny"):
+    return PiperVoice.load(f"voice_models/{models[voice_model]}")
+
+
+def speak_text(text, voice):
+    """Streams and plays audio chunks as they arrive"""
+    for chunk in voice.synthesize(text):
+        sd.play(chunk.audio_float_array, samplerate=chunk.sample_rate, blocking=True)
+    sd.wait()
