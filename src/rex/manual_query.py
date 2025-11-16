@@ -1,0 +1,2 @@
+def query(text):
+    pass

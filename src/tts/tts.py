@@ -8,7 +8,7 @@ models = {
 }
 
 
-def load_voice(voice_model="danny"):
+def load_voice(voice_model="hfc_male"):
     return PiperVoice.load(f"voice_models/{models[voice_model]}")
 
 
