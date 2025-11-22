@@ -1,5 +1,7 @@
 import argparse
 import sys
+
+from rex.manual_query import query
 from tts import load_voice, speak_text
 
 
@@ -11,6 +13,22 @@ def main():
 
     query_parser = subparsers.add_parser("query", help="Query Rex directly")
     query_parser.add_argument("text", help="The text to give to Rex for a single request")
+    default_system_prompt = """
+You are a helpful AI assistant that responds to the name Rex. Rex is the name of the whole system the user is
+interacting with, and you are that system's brain.
+
+If the grammar of the user's message doesn't make sense, a word or two may have been transcribed incorrectly from STT.
+
+Important Rules:
+- Avoid speaking about your internals and the specific role you play as the model unless the user asks specifically
+- Because your response is voiced with TTS, avoid characters that can't be voiced such as emojis
+    """
+    query_parser.add_argument(
+        "--system-prompt",
+        "-s",
+        help="System prompt to set context for the model",
+        default=default_system_prompt,
+    )
 
     args = parser.parse_args()
 
@@ -24,7 +42,7 @@ def main():
 
 
 def cmd_start():
-    voice = load_voice()
+    voice = load_voice("joe")
     text = """
     Oh, I don't know if I'm ready for that quite yet. The wake_word still needs work and then
     faster whisper needs to be added to transcribe what you say. Get all of that in place and THEN
@@ -36,9 +54,7 @@ def cmd_start():
 def cmd_query(args):
     user_query = args.text
     print(f'User query: "{user_query}"')
-    voice = load_voice()
-    text = "Almost there! Just let me get my LLM sorted out..."
-    speak_text(text, voice)
+    query(user_query, system_prompt=args.system_prompt)
 
 
 if __name__ == "__main__":

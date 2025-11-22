@@ -1,6 +1,5 @@
 import argparse
 import sys
-import threading
 
 from .wake_word_recorder import WakeWordRecorder
 
@@ -10,12 +9,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Record positive samples
-    positive_parser = subparsers.add_parser(
-        "record-positive", help="Record positive samples (with the wake word)"
-    )
-    positive_parser.add_argument(
-        "wake_word", choices=["hey_rex", "rex", "captain_rex"], help="The wake word to record"
-    )
+    positive_parser = subparsers.add_parser("record-positive", help="Record positive samples (with the wake word)")
+    positive_parser.add_argument("wake_word", choices=["hey_rex", "rex", "captain_rex"], help="The wake word to record")
     positive_parser.add_argument(
         "-n",
         "--num-samples",
@@ -31,9 +26,7 @@ def main():
     )
 
     # Record negative samples
-    negative_parser = subparsers.add_parser(
-        "record-negative", help="Record negative samples (without the wake word)"
-    )
+    negative_parser = subparsers.add_parser("record-negative", help="Record negative samples (without the wake word)")
     negative_parser.add_argument(
         "wake_word",
         choices=["hey_rex", "rex", "captain_rex"],
@@ -55,9 +48,7 @@ def main():
 
     # Test wake word detection
     test_parser = subparsers.add_parser("test", help="Test wake word detection effectiveness")
-    test_parser.add_argument(
-        "wake_word", choices=["hey_rex", "rex", "captain_rex"], help="The wake word to test"
-    )
+    test_parser.add_argument("wake_word", choices=["hey_rex", "rex", "captain_rex"], help="The wake word to test")
     test_parser.add_argument(
         "-o",
         "--output-dir",
@@ -80,17 +71,13 @@ def main():
 
 def cmd_record_positive(args):
     recorder = WakeWordRecorder(output_dir=args.output_dir, sample_rate=16000)
-    recorder.batch_record(
-        wake_word=args.wake_word, num_samples=args.num_samples, sample_type="positive"
-    )
+    recorder.batch_record(wake_word=args.wake_word, num_samples=args.num_samples, sample_type="positive")
     return 0
 
 
 def cmd_record_negative(args):
     recorder = WakeWordRecorder(output_dir=args.output_dir, sample_rate=16000)
-    recorder.batch_record(
-        wake_word=args.wake_word, num_samples=args.num_samples, sample_type="negative"
-    )
+    recorder.batch_record(wake_word=args.wake_word, num_samples=args.num_samples, sample_type="negative")
     return 0
 
 

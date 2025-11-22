@@ -1,5 +1,5 @@
-from piper import PiperVoice
 import sounddevice as sd
+from piper import PiperVoice
 
 models = {
     "danny": "en_US-danny-low.onnx",

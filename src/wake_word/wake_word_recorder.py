@@ -1,10 +1,11 @@
-import queue
 import os
+import queue
 import time
+from datetime import datetime
+
+import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import numpy as np
-from datetime import datetime
 
 
 class WakeWordRecorder:
