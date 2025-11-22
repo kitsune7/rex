@@ -2,6 +2,7 @@ import argparse
 import sys
 
 from rex.manual_query import query
+from rex.speech_input import SpeechRecorder
 from tts import load_voice, speak_text
 
 
@@ -42,13 +43,32 @@ Important Rules:
 
 
 def cmd_start():
-    voice = load_voice("joe")
-    text = """
-    Oh, I don't know if I'm ready for that quite yet. The wake_word still needs work and then
-    faster whisper needs to be added to transcribe what you say. Get all of that in place and THEN
-    we'll talk.
+    # Default system prompt for voice interactions
+    default_system_prompt = """
+You are a helpful AI assistant that responds to the name Rex. Rex is the name of the whole system the user is
+interacting with, and you are that system's brain.
+
+If the grammar of the user's message doesn't make sense, a word or two may have been transcribed incorrectly from STT.
+
+Important Rules:
+- Avoid speaking about your internals and the specific role you play as the model unless the user asks specifically
+- Because your response is voiced with TTS, avoid characters that can't be voiced such as emojis
     """
-    speak_text(text, voice)
+    recorder = SpeechRecorder(sample_rate=16000, silence_duration=1.5)
+
+    print("Listening for user speech...")
+    audio_data = recorder.record_until_silence()
+
+    print("End of speech detected. Transcribing now...")
+    transcription = recorder.transcribe(audio_data)
+    print(f"\nTranscription of user speech:\n{transcription}")
+
+    # Pass transcription to LLM for processing and get voice response
+    if transcription.strip():
+        print("\nProcessing query...")
+        query(transcription, system_prompt=default_system_prompt)
+    else:
+        print("No speech detected or transcription failed.")
 
 
 def cmd_query(args):
