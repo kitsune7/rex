@@ -13,6 +13,8 @@ import argparse
 from collections import deque
 import threading
 
+from .model_utils import ensure_openwakeword_models
+
 
 class WakeWordListener:
     def __init__(self, model_path, threshold=0.5, chunk_size=1280):
@@ -32,6 +34,11 @@ class WakeWordListener:
         self.format = pyaudio.paInt16
         self.channels = 1
         self.rate = 16000
+
+        # Ensure openwakeword resource models are available
+        if not ensure_openwakeword_models():
+            print("❌ Failed to download required models")
+            sys.exit(1)
 
         # Initialize model
         print(f"Loading model from: {model_path}")
