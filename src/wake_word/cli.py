@@ -2,11 +2,23 @@ import argparse
 import sys
 
 from .wake_word_recorder import WakeWordRecorder
+from .wake_word_listener import run_wake_word_listener
 
 
 def main():
     parser = argparse.ArgumentParser(description="Wake Word Recorder - Train wake word detection")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    test_pretrained_parser = subparsers.add_parser(
+        "test-pretrained", help="Manually test the pretained wake word effectiveness"
+    )
+    test_pretrained_parser.add_argument("model_path", help="Path to the .onnx model file")
+    test_pretrained_parser.add_argument(
+        "--threshold", type=float, default=0.5, help="Detection threshold (0.0-1.0, default: 0.5)"
+    )
+    test_pretrained_parser.add_argument(
+        "--chunk-size", type=int, default=1280, help="Audio chunk size in samples (default: 1280)"
+    )
 
     # Record positive samples
     positive_parser = subparsers.add_parser("record-positive", help="Record positive samples (with the wake word)")
@@ -64,6 +76,8 @@ def main():
         return cmd_record_negative(args)
     elif args.command == "test":
         return cmd_test(args)
+    elif args.command == "test-pretrained":
+        return run_wake_word_listener(args)
     else:
         parser.print_help()
         return 0
