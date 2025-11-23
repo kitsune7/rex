@@ -24,10 +24,8 @@ class SpeechRecorder:
         self.audio_queue = queue.Queue()
         self.recording = False
 
-        # Load Silero VAD model
         self.vad_model = load_silero_vad()
 
-        # Load faster-whisper model (small for balanced speed/accuracy)
         print("Loading Whisper model (this may take a moment on first run)...")
         self.whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
 
@@ -161,3 +159,21 @@ class SpeechRecorder:
         print("Transcribing...")
         transcription = self.transcribe(audio_data)
         return transcription
+
+
+def get_transcription(debug=False) -> str:
+    recorder = SpeechRecorder(sample_rate=16000, silence_duration=1.5)
+
+    if debug:
+        print("Listening for user speech...")
+    audio_data = recorder.record_until_silence()
+
+    if debug:
+        print("End of speech detected. Transcribing now...")
+    transcription = recorder.transcribe(audio_data)
+
+    if debug:
+        print(f"\nTranscription of user speech:\n{transcription}")
+    if transcription.strip():
+        return transcription
+    return "No speech detected or transcription failed."
