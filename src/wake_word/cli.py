@@ -12,6 +12,7 @@ def main():
     )
     parser.add_argument("--threshold", type=float, default=0.5, help="Detection threshold (0.0-1.0, default: 0.5)")
     parser.add_argument("--chunk-size", type=int, default=1280, help="Audio chunk size in samples (default: 1280)")
+    parser.add_argument("--cooldown", type=float, default=2.0, help="Cooldown period between detections in seconds (default: 2.0)")
 
     args = parser.parse_args()
 

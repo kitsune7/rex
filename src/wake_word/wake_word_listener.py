@@ -18,7 +18,7 @@ from .model_utils import ensure_openwakeword_models
 
 
 class WakeWordListener:
-    def __init__(self, model_path, threshold=0.5, chunk_size=1280):
+    def __init__(self, model_path, threshold=0.5, chunk_size=1280, cooldown_period=2.0):
         """
         Initialize the wake word listener.
 
@@ -26,10 +26,12 @@ class WakeWordListener:
             model_path: Path to the .onnx model file
             threshold: Detection threshold (0.0 to 1.0)
             chunk_size: Audio chunk size (default 1280 for 80ms at 16kHz)
+            cooldown_period: Minimum time between detections in seconds (default 2.0)
         """
         self.model_path = model_path
         self.threshold = threshold
         self.chunk_size = chunk_size
+        self.cooldown_period = cooldown_period
 
         # Audio parameters (openWakeWord expects 16kHz, mono, int16)
         self.format = pyaudio.paInt16
@@ -55,6 +57,7 @@ class WakeWordListener:
         # Detection state
         self.is_running = False
         self.detection_count = 0
+        self.last_detection_time = 0
 
     def start_listening(self):
         """Start the audio stream and begin listening."""
@@ -89,7 +92,10 @@ class WakeWordListener:
                 # Check detection for our model
                 for mdl_name, score in prediction.items():
                     if score >= self.threshold:
-                        self.handle_detection(mdl_name, score)
+                        current_time = time.time()
+                        if current_time - self.last_detection_time >= self.cooldown_period:
+                            self.handle_detection(mdl_name, score)
+                            self.last_detection_time = current_time
 
         except KeyboardInterrupt:
             print("\n\n🛑 Stopping listener...")
@@ -108,9 +114,6 @@ class WakeWordListener:
         print(f"   Model: {model_name}")
         print(f"   Confidence: {score:.3f}")
         print("-" * 50)
-
-        # Optional: Add a small cooldown to prevent multiple rapid detections
-        time.sleep(0.5)
 
         # Here you can add any additional logic for what happens after detection
         # For example:
@@ -144,5 +147,10 @@ def run_wake_word_listener(args):
         print(f"❌ Error: Threshold must be between 0.0 and 1.0")
         sys.exit(1)
 
-    listener = WakeWordListener(model_path=str(model_path), threshold=args.threshold, chunk_size=args.chunk_size)
+    listener = WakeWordListener(
+        model_path=str(model_path),
+        threshold=args.threshold,
+        chunk_size=args.chunk_size,
+        cooldown_period=args.cooldown
+    )
     listener.start_listening()
