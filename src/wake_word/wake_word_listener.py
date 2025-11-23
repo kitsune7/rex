@@ -12,6 +12,7 @@ from openwakeword import Model
 import argparse
 from collections import deque
 import threading
+from pathlib import Path
 
 from .model_utils import ensure_openwakeword_models
 
@@ -132,19 +133,16 @@ class WakeWordListener:
 
 
 def run_wake_word_listener(args):
-    if not os.path.exists(args.model_path):
-        print(f"❌ Error: Model file not found: {args.model_path}")
+    base_model_path = Path("models/wake_word_models")
+    model_path = base_model_path / args.model / f"{args.model}.onnx"
+
+    if not os.path.exists(model_path):
+        print(f"❌ Error: Model file not found at: {model_path}")
         sys.exit(1)
 
-    if not args.model_path.endswith(".onnx"):
-        print(f"⚠️  Warning: Expected .onnx file, got: {args.model_path}")
-
-    # Validate threshold
     if not 0.0 <= args.threshold <= 1.0:
         print(f"❌ Error: Threshold must be between 0.0 and 1.0")
         sys.exit(1)
 
-    # Create and start listener
-    listener = WakeWordListener(model_path=args.model_path, threshold=args.threshold, chunk_size=args.chunk_size)
-
+    listener = WakeWordListener(model_path=str(model_path), threshold=args.threshold, chunk_size=args.chunk_size)
     listener.start_listening()

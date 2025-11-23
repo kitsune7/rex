@@ -9,7 +9,7 @@ models = {
 
 
 def load_voice(voice_model="hfc_male"):
-    return PiperVoice.load(f"voice_models/{models[voice_model]}")
+    return PiperVoice.load(f"models/tts/{models[voice_model]}")
 
 
 def speak_text(text, voice):
