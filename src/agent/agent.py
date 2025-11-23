@@ -1,5 +1,5 @@
 from .base_agent import create_agent
-from .tools import get_human_text_response, ask_human_for_voice_response, get_current_time
+from .tools import get_human_text_response, ask_human_for_voice_response, get_current_time, calculate
 from langchain_core.messages import HumanMessage
 from langfuse.langchain import CallbackHandler
 
@@ -34,7 +34,7 @@ def extract_text_response(response):
 
 
 def run_voice_agent(initial_query: str):
-    tools = [ask_human_for_voice_response, get_current_time]
+    tools = [ask_human_for_voice_response, get_current_time, calculate]
     agent = create_agent(tools)
     langfuse_handler = CallbackHandler()
     response = agent.invoke(
@@ -45,7 +45,7 @@ def run_voice_agent(initial_query: str):
 
 
 def run_text_agent(initial_query: str):
-    tools = [get_human_text_response, get_current_time]
+    tools = [get_human_text_response, get_current_time, calculate]
     agent = create_agent(tools)
     langfuse_handler = CallbackHandler()
     response = agent.invoke(

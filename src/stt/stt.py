@@ -161,8 +161,9 @@ class SpeechRecorder:
         return transcription
 
 
-def get_transcription(debug=False) -> str:
-    recorder = SpeechRecorder(sample_rate=16000, silence_duration=1.5)
+def get_transcription(recorder=None, debug=False) -> str:
+    if not recorder:
+        recorder = SpeechRecorder(sample_rate=16000, silence_duration=1.5)
 
     if debug:
         print("Listening for user speech...")

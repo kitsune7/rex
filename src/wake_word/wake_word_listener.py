@@ -167,6 +167,20 @@ class WakeWordListener:
             print(f"❌ Wake word detection error: {e}")
             return False
 
+    def reset_detection_state(self):
+        """Reset the model state and clear audio buffer."""
+        # Reset model's internal state
+        self.model.reset()
+
+        # Clear any remaining audio in the buffer
+        if self.stream is not None and self.stream.is_active():
+            # Read and discard any buffered audio chunks
+            try:
+                while self.stream.get_read_available() > 0:
+                    self.stream.read(self.stream.get_read_available(), exception_on_overflow=False)
+            except:
+                pass  # Ignore errors during buffer clearing
+
     def stop_listening(self):
         """Clean up audio resources."""
         self.is_running = False
@@ -194,9 +208,6 @@ def run_wake_word_listener(args):
         sys.exit(1)
 
     listener = WakeWordListener(
-        model_path=str(model_path),
-        threshold=args.threshold,
-        chunk_size=args.chunk_size,
-        cooldown_period=args.cooldown
+        model_path=str(model_path), threshold=args.threshold, chunk_size=args.chunk_size, cooldown_period=args.cooldown
     )
     listener.start_listening()

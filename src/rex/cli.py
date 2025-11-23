@@ -6,7 +6,7 @@ from pathlib import Path
 
 from agent import run_voice_agent, run_text_agent
 from tts import load_voice, speak_text
-from stt import get_transcription
+from stt import get_transcription, SpeechRecorder
 from wake_word.wake_word_listener import WakeWordListener
 
 
@@ -58,6 +58,8 @@ def cmd_start():
     print("Loading voice model...")
     voice = load_voice()
 
+    recorder = SpeechRecorder(sample_rate=16000, silence_duration=1.5)
+
     print("\n✅ Rex is ready!")
     print("🎤 Listening for 'hey rex'...")
     print("   Press Ctrl+C to exit\n")
@@ -77,7 +79,7 @@ def cmd_start():
 
             while error_count < max_retries:
                 try:
-                    transcription = get_transcription(debug=False)
+                    transcription = get_transcription(recorder, debug=False)
 
                     # Empty transcription - go back to wake word
                     if not transcription or transcription == "No speech detected or transcription failed.":
@@ -100,24 +102,21 @@ def cmd_start():
                         transcription = None
                         break
 
-            # If no valid transcription, go back to wake word listening
             if not transcription:
+                wake_word_listener.reset_detection_state()
                 print("🎤 Listening for 'hey rex'...")
                 continue
 
             print(f"\n💬 You said: {transcription}\n")
 
-            # Check for stop command
             if transcription.strip().lower() == "stop":
+                wake_word_listener.reset_detection_state()
                 print("🎤 Listening for 'hey rex'...")
                 continue
 
-            # Run agent with transcription
             try:
                 response = run_voice_agent(transcription)
                 print(f"\n🤖 Rex: {response}\n")
-
-                # Speak agent's response via TTS
                 speak_text(response, voice)
 
             except Exception as e:
@@ -125,7 +124,7 @@ def cmd_start():
                 error_message = "Sorry, I encountered an error processing your request."
                 speak_text(error_message, voice)
 
-            # Go back to wake word listening
+            wake_word_listener.reset_detection_state()
             print("🎤 Listening for 'hey rex'...")
 
     except KeyboardInterrupt:
