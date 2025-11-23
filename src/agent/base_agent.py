@@ -3,19 +3,15 @@ from langchain.agents import create_agent as create_langchain_agent
 from pydantic import SecretStr
 from datetime import date, datetime
 from dotenv import load_dotenv
-from langfuse.langchain import CallbackHandler
 
 load_dotenv()
 
 
 def create_agent(tools):
-    langfuse_handler = CallbackHandler()
-
     llm = ChatOpenAI(
         openai_api_base="http://localhost:1234/v1",
         api_key=SecretStr("not-needed"),
         temperature=0.7,
-        callbacks=[langfuse_handler],
     )
 
     system_prompt = f"""
