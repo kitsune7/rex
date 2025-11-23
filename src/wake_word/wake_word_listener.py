@@ -121,6 +121,52 @@ class WakeWordListener:
         # - Trigger another action
         # - Start recording for speech recognition
 
+    def wait_for_detection(self):
+        """
+        Wait for a single wake word detection and return.
+        Returns True when wake word is detected, False if interrupted.
+        """
+        try:
+            # Open audio stream if not already open
+            if self.stream is None:
+                self.stream = self.audio.open(
+                    format=self.format,
+                    channels=self.channels,
+                    rate=self.rate,
+                    input=True,
+                    frames_per_buffer=self.chunk_size,
+                    stream_callback=None,
+                )
+
+            self.is_running = True
+
+            # Listen until wake word is detected
+            while self.is_running:
+                # Read audio chunk
+                audio_data = self.stream.read(self.chunk_size, exception_on_overflow=False)
+
+                # Convert bytes to numpy array
+                audio_array = np.frombuffer(audio_data, dtype=np.int16)
+
+                # Run inference
+                prediction = self.model.predict(audio_array)
+
+                # Check detection for our model
+                for mdl_name, score in prediction.items():
+                    if score >= self.threshold:
+                        current_time = time.time()
+                        if current_time - self.last_detection_time >= self.cooldown_period:
+                            self.detection_count += 1
+                            self.last_detection_time = current_time
+                            return True
+
+        except KeyboardInterrupt:
+            self.is_running = False
+            return False
+        except Exception as e:
+            print(f"❌ Wake word detection error: {e}")
+            return False
+
     def stop_listening(self):
         """Clean up audio resources."""
         self.is_running = False
