@@ -39,11 +39,15 @@ def _generate_tone(
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     tone = np.sin(2 * np.pi * frequency * t)
 
-    # Apply envelope to avoid clicks (10ms attack/release)
-    envelope_samples = int(0.01 * sample_rate)
+    # Apply raised cosine envelope to avoid clicks (20ms attack/release)
+    # Raised cosine (Hanning) creates smooth S-curve with no discontinuities
+    # in the derivative, preventing pops on speakers
+    envelope_samples = int(0.02 * sample_rate)
     envelope = np.ones_like(tone)
-    envelope[:envelope_samples] = np.linspace(0, 1, envelope_samples)
-    envelope[-envelope_samples:] = np.linspace(1, 0, envelope_samples)
+    # Fade in: 0.5 * (1 - cos(pi * t)) goes from 0 to 1 smoothly
+    envelope[:envelope_samples] = 0.5 * (1 - np.cos(np.pi * np.linspace(0, 1, envelope_samples)))
+    # Fade out: 0.5 * (1 + cos(pi * t)) goes from 1 to 0 smoothly
+    envelope[-envelope_samples:] = 0.5 * (1 + np.cos(np.pi * np.linspace(0, 1, envelope_samples)))
 
     return (tone * envelope * volume).astype(np.float32)
 
