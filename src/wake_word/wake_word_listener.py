@@ -136,15 +136,21 @@ class WakeWordListener:
 
         return False
 
-    def _record_until_silence(self) -> np.ndarray:
+    def _record_until_silence(self, include_buffer: bool = True) -> np.ndarray:
         """
         Continue recording after wake word until VAD detects silence.
 
+        Args:
+            include_buffer: If True, include rolling buffer contents in output.
+
         Returns:
-            Complete audio: rolling buffer contents + new audio after wake word.
+            Complete audio: optionally rolling buffer contents + new audio.
         """
-        # Start with buffered audio
-        audio_chunks = [np.array(self._ring_buffer, dtype=np.int16)]
+        # Start with buffered audio if requested
+        if include_buffer:
+            audio_chunks = [np.array(self._ring_buffer, dtype=np.int16)]
+        else:
+            audio_chunks = []
 
         last_speech_time = time.time()
         speech_detected = False
@@ -179,6 +185,83 @@ class WakeWordListener:
                     return np.concatenate(audio_chunks)
 
         return np.concatenate(audio_chunks) if audio_chunks else np.array([], dtype=np.int16)
+
+    def listen_for_speech(self, timeout: float = 5.0) -> np.ndarray | None:
+        """
+        Listen for speech without requiring wake word detection.
+
+        Waits for speech to begin (up to timeout), then records until silence.
+        Used for follow-up questions where the user can respond without
+        saying the wake word again.
+
+        Args:
+            timeout: Maximum seconds to wait for speech to begin.
+
+        Returns:
+            numpy array of audio samples if speech detected,
+            or None if timeout occurred without speech.
+        """
+        self._interrupted = False
+        self._ring_buffer.clear()
+
+        vad_chunk_size = 512  # Silero VAD requires 512 samples at 16kHz
+        vad_buffer = []
+        start_time = time.time()
+
+        # Open audio stream
+        self._stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype=np.int16,
+            blocksize=self.chunk_size,
+        )
+
+        try:
+            with self._stream:
+                # Phase 1: Wait for speech to start (with timeout)
+                while not self._interrupted:
+                    # Check timeout
+                    if (time.time() - start_time) > timeout:
+                        return None
+
+                    audio_chunk, _ = self._stream.read(self.chunk_size)
+                    audio_chunk = audio_chunk.flatten()
+
+                    # Keep audio in ring buffer in case speech started
+                    self._ring_buffer.extend(audio_chunk)
+                    vad_buffer.append(audio_chunk)
+
+                    # Process VAD when we have enough samples
+                    total_samples = sum(len(c) for c in vad_buffer)
+                    while total_samples >= vad_chunk_size:
+                        vad_audio = np.concatenate(vad_buffer)
+                        vad_chunk = vad_audio[:vad_chunk_size]
+                        remaining = vad_audio[vad_chunk_size:]
+                        vad_buffer = [remaining] if len(remaining) > 0 else []
+                        total_samples = len(remaining)
+
+                        # Run VAD
+                        audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
+                        speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
+
+                        if speech_prob > 0.5:
+                            # Speech detected! Trim ring buffer to only recent audio
+                            # to avoid including long periods of silence from wait phase
+                            recent_samples = int(0.5 * self.sample_rate)  # 0.5 seconds
+                            buffer_array = np.array(self._ring_buffer, dtype=np.int16)
+                            self._ring_buffer.clear()
+                            self._ring_buffer.extend(
+                                buffer_array[-recent_samples:]
+                                if len(buffer_array) > recent_samples
+                                else buffer_array
+                            )
+                            return self._record_until_silence(include_buffer=True)
+
+                return None
+
+        except Exception as e:
+            print(f"❌ Audio error: {e}")
+            return None
 
     def stop(self):
         """Stop listening and clean up."""

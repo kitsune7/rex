@@ -1,7 +1,10 @@
 from .base_agent import create_agent
 from .tools import get_current_time, calculate, set_timer, check_timers, stop_timer
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langfuse.langchain import CallbackHandler
+
+# Maximum number of messages to keep in history to prevent unbounded growth
+MAX_HISTORY_MESSAGES = 20
 
 
 def extract_text_response(response):
@@ -33,11 +36,43 @@ def extract_text_response(response):
     return text_response
 
 
-def run_voice_agent(initial_query: str):
+def run_voice_agent(query: str, history: list | None = None) -> tuple[str, list]:
+    """
+    Run the voice agent with a user query.
+
+    Args:
+        query: The user's message/question.
+        history: Optional list of previous messages for conversation context.
+                 If None, starts a new conversation.
+
+    Returns:
+        A tuple of (response_text, updated_history) where updated_history
+        includes the new user message and agent response.
+    """
     tools = [get_current_time, calculate, set_timer, check_timers, stop_timer]
     agent = create_agent(tools)
     langfuse_handler = CallbackHandler()
+
+    # Initialize or use existing history
+    if history is None:
+        history = []
+
+    # Add user message to history
+    history.append(HumanMessage(content=query))
+
+    # Invoke agent with full conversation history
     response = agent.invoke(
-        {"messages": [HumanMessage(content=initial_query)]}, config={"callbacks": [langfuse_handler]}
+        {"messages": history}, config={"callbacks": [langfuse_handler]}
     )
-    return extract_text_response(response)
+
+    # Extract text response
+    text_response = extract_text_response(response)
+
+    # Add agent response to history
+    history.append(AIMessage(content=text_response))
+
+    # Trim history if it gets too long (keep most recent messages)
+    if len(history) > MAX_HISTORY_MESSAGES:
+        history = history[-MAX_HISTORY_MESSAGES:]
+
+    return text_response, history
