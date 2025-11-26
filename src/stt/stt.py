@@ -58,4 +58,10 @@ class Transcriber:
         result = text
         for pattern in patterns:
             result = re.sub(pattern, "", result, flags=re.IGNORECASE)
-        return result.strip()
+        result = result.strip()
+
+        # Capitalize the first letter since the wake word was at the start
+        if result:
+            result = result[0].upper() + result[1:]
+
+        return result

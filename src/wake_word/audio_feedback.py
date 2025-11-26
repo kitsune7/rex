@@ -4,6 +4,7 @@ Audio feedback tones for wake word detection.
 Plays short musical tones to indicate listening state:
 - Ascending C→G: Rex is now listening
 - Descending G→C: Rex has finished listening
+- Looping D→A: Rex is thinking (waiting for LLM)
 """
 
 import threading
@@ -14,14 +15,26 @@ import sounddevice as sd
 # Note frequencies (Hz)
 C4 = 261.63  # Middle C
 G4 = 392.00  # Perfect fifth above C4
+D4 = 293.66  # D above middle C
+A4 = 440.00  # A above middle C
 
 # Tone parameters
 SAMPLE_RATE = 44100
 NOTE_DURATION = 0.1  # seconds per note
 GAP_DURATION = 0.05  # seconds between notes
 
+# Thinking tone parameters (faster tempo)
+THINKING_NOTE_DURATION = 0.4  # seconds per note
+THINKING_GAP_DURATION = 0.05  # seconds between notes
+THINKING_VOLUME = 0.2  # softer than regular tones
 
-def _generate_tone(frequency: float, duration: float, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+
+def _generate_tone(
+    frequency: float,
+    duration: float,
+    sample_rate: int = SAMPLE_RATE,
+    volume: float = 0.3,
+) -> np.ndarray:
     """Generate a sine wave tone with smooth attack and release."""
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     tone = np.sin(2 * np.pi * frequency * t)
@@ -32,7 +45,7 @@ def _generate_tone(frequency: float, duration: float, sample_rate: int = SAMPLE_
     envelope[:envelope_samples] = np.linspace(0, 1, envelope_samples)
     envelope[-envelope_samples:] = np.linspace(1, 0, envelope_samples)
 
-    return (tone * envelope * 0.3).astype(np.float32)  # 0.3 = volume
+    return (tone * envelope * volume).astype(np.float32)
 
 
 def _generate_two_tone_sequence(freq1: float, freq2: float) -> np.ndarray:
@@ -65,4 +78,47 @@ def play_done_tone():
     audio = _generate_two_tone_sequence(G4, C4)
     thread = threading.Thread(target=_play_audio, args=(audio,), daemon=True)
     thread.start()
+
+
+class ThinkingTone:
+    """Looping D→A tone that plays while waiting for LLM inference."""
+
+    def __init__(self):
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _generate_thinking_sequence(self) -> np.ndarray:
+        """Generate a D→A tone sequence with faster timing."""
+        tone1 = _generate_tone(D4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
+        gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
+        tone2 = _generate_tone(A4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
+        return np.concatenate([tone1, gap, tone2])
+
+    def _play_loop(self):
+        """Play the thinking tone on loop until stopped."""
+        audio = self._generate_thinking_sequence()
+        duration = len(audio) / SAMPLE_RATE
+
+        while not self._stop_event.is_set():
+            try:
+                sd.play(audio, SAMPLE_RATE)
+                # Check stop signal frequently during playback
+                elapsed = 0.0
+                check_interval = 0.05
+                while elapsed < duration and not self._stop_event.is_set():
+                    self._stop_event.wait(timeout=check_interval)
+                    elapsed += check_interval
+            except Exception:
+                pass  # Silently ignore audio errors
+
+    def start(self):
+        """Start playing the thinking tone. Non-blocking."""
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._play_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop the thinking tone."""
+        self._stop_event.set()
+        sd.stop()
 

@@ -7,6 +7,7 @@ from agent.tools import get_timer_manager
 from tts import load_voice, speak_text
 from stt import Transcriber
 from wake_word import WakeWordListener
+from wake_word.audio_feedback import ThinkingTone
 
 # Timeout in seconds for waiting for follow-up responses
 FOLLOW_UP_TIMEOUT = 5.0
@@ -78,7 +79,15 @@ def main():
                 continue
 
             try:
-                response, history = run_voice_agent(transcription, history)
+                # Play thinking tone while waiting for LLM
+                print("🤔 Thinking...")
+                thinking_tone = ThinkingTone()
+                thinking_tone.start()
+                try:
+                    response, history = run_voice_agent(transcription, history)
+                finally:
+                    thinking_tone.stop()
+
                 print(f"\n🤖 Rex: {response}\n")
                 speak_text(response, voice)
 
