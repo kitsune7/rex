@@ -9,6 +9,7 @@ the complete audio (buffered + new) for transcription.
 import collections
 import signal
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -21,6 +22,84 @@ from silero_vad import load_silero_vad
 
 from .audio_feedback import play_done_tone, play_listening_tone
 from .model_utils import ensure_openwakeword_models
+
+
+class WakeWordMonitor:
+    """
+    Background wake word detector for interruption during TTS playback.
+    
+    Runs in a separate thread and sets an event when wake word is detected.
+    Use this to allow users to interrupt Rex while he's speaking.
+    """
+
+    def __init__(self, model_path: str, threshold: float = 0.5):
+        """
+        Initialize the wake word monitor.
+
+        Args:
+            model_path: Path to the .onnx wake word model file
+            threshold: Detection threshold (0.0 to 1.0)
+        """
+        self.threshold = threshold
+        self.sample_rate = 16000
+        self.chunk_size = 1280  # 80ms chunks
+
+        # Ensure openwakeword models are available
+        if not ensure_openwakeword_models():
+            raise RuntimeError("Failed to download required models")
+
+        # Load wake word model (separate instance for this monitor)
+        self._wake_model = Model(wakeword_models=[model_path], inference_framework="onnx")
+
+        # Threading state
+        self._detected_event = threading.Event()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _monitor_loop(self):
+        """Background thread that listens for wake word."""
+        try:
+            stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype=np.int16,
+                blocksize=self.chunk_size,
+            )
+            with stream:
+                self._wake_model.reset()
+                while not self._stop_event.is_set():
+                    audio_chunk, _ = stream.read(self.chunk_size)
+                    audio_chunk = audio_chunk.flatten()
+
+                    predictions = self._wake_model.predict(audio_chunk)
+                    for score in predictions.values():
+                        if score >= self.threshold:
+                            self._detected_event.set()
+                            return  # Stop monitoring once detected
+        except Exception:
+            pass  # Silently handle audio errors
+
+    def start(self):
+        """Start monitoring for wake word in the background."""
+        self._detected_event.clear()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop monitoring."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=0.5)
+            self._thread = None
+
+    def was_detected(self) -> bool:
+        """Check if wake word was detected (non-blocking)."""
+        return self._detected_event.is_set()
+
+    def reset(self):
+        """Reset the detection state."""
+        self._detected_event.clear()
 
 
 class WakeWordListener:
