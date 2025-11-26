@@ -1,5 +1,5 @@
 from .base_agent import create_agent
-from .tools import get_current_time, calculate
+from .tools import get_current_time, calculate, set_timer, check_timers, stop_timer
 from langchain_core.messages import HumanMessage
 from langfuse.langchain import CallbackHandler
 
@@ -34,7 +34,7 @@ def extract_text_response(response):
 
 
 def run_voice_agent(initial_query: str):
-    tools = [get_current_time, calculate]
+    tools = [get_current_time, calculate, set_timer, check_timers, stop_timer]
     agent = create_agent(tools)
     langfuse_handler = CallbackHandler()
     response = agent.invoke(

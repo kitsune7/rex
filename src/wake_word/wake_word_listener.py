@@ -10,12 +10,13 @@ import collections
 import signal
 import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
 import torch
 from openwakeword import Model
-from pathlib import Path
 from silero_vad import load_silero_vad
 
 from .model_utils import ensure_openwakeword_models
@@ -70,9 +71,13 @@ class WakeWordListener:
         """Handle Ctrl+C gracefully."""
         self._interrupted = True
 
-    def wait_for_wake_word_and_speech(self) -> np.ndarray | None:
+    def wait_for_wake_word_and_speech(self, on_wake_word: Callable[[], None] | None = None) -> np.ndarray | None:
         """
         Wait for wake word, then capture speech until silence.
+
+        Args:
+            on_wake_word: Optional callback invoked when wake word is detected,
+                          before recording starts. Use this to mute other audio sources.
 
         Returns:
             numpy array of audio samples (including buffered pre-wake-word audio),
@@ -95,6 +100,12 @@ class WakeWordListener:
                 # Phase 1: Listen for wake word while filling buffer
                 if not self._wait_for_wake_word():
                     return None
+
+                print("🔔 Wake word detected! Transcribing audio...")
+
+                # Invoke callback (e.g., to mute timer sounds)
+                if on_wake_word:
+                    on_wake_word()
 
                 # Phase 2: Continue recording until silence
                 return self._record_until_silence()

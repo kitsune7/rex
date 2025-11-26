@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from agent import run_voice_agent
+from agent.tools import get_timer_manager
 from tts import load_voice, speak_text
 from stt import Transcriber
 from wake_word import WakeWordListener
@@ -26,14 +27,20 @@ def main():
     print("🎤 Listening for 'hey rex'...")
     print("   Press Ctrl+C to exit\n")
 
+    timer_manager = get_timer_manager()
+
     try:
         while True:
-            audio = listener.wait_for_wake_word_and_speech()
+            # Mute timer sounds when wake word is detected so VAD can hear silence
+            audio = listener.wait_for_wake_word_and_speech(on_wake_word=timer_manager.mute)
 
             if audio is None or listener._interrupted:
                 break
 
             transcription = transcriber.transcribe(audio)
+
+            # Unmute timer after transcription is complete
+            timer_manager.unmute()
 
             if not transcription:
                 print("🎤 Listening for 'hey rex'...")
@@ -41,7 +48,9 @@ def main():
 
             print(f"\n💬 You said: {transcription}\n")
 
-            if transcription.strip().lower() == "stop":
+            if transcription.strip().lower() in ("stop", "stop the timer"):
+                if timer_manager.stop_any_ringing():
+                    print("🔕 Timer alarm stopped.")
                 print("🎤 Listening for 'hey rex'...")
                 continue
 
