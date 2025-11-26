@@ -1,180 +1,61 @@
-import queue
-import time
+"""
+Speech-to-Text transcription using faster-whisper.
+"""
+
+import re
 
 import numpy as np
-import sounddevice as sd
-import torch
 from faster_whisper import WhisperModel
-from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 
 
-class SpeechRecorder:
-    """Records speech with Voice Activity Detection and transcribes using Whisper."""
+class Transcriber:
+    """Transcribes audio using Whisper."""
 
-    def __init__(self, sample_rate=16000, silence_duration=1.5):
-        """
-        Initialize the speech recorder.
-
-        Args:
-            sample_rate: Audio sample rate in Hz (default: 16000)
-            silence_duration: Duration of silence in seconds to stop recording (default: 1.5)
-        """
-        self.sample_rate = sample_rate
-        self.silence_duration = silence_duration
-        self.audio_queue = queue.Queue()
-        self.recording = False
-
-        self.vad_model = load_silero_vad()
-
+    def __init__(self):
         print("Loading Whisper model (this may take a moment on first run)...")
-        self.whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
+        self._model = WhisperModel("small", device="cpu", compute_type="int8")
 
-    def audio_callback(self, in_data, frames, time_info, status):
-        """Callback function for audio stream - puts audio data into queue."""
-        if status:
-            print(f"Audio callback status: {status}")
-        if self.recording:
-            self.audio_queue.put(in_data.copy())
-
-    def record_until_silence(self):
+    def transcribe(self, audio_data: np.ndarray, strip_wake_word: bool = True) -> str:
         """
-        Record audio until VAD detects silence for the specified duration.
-
-        Returns:
-            numpy.ndarray: The recorded audio data
-        """
-        # Clear any existing audio in the queue
-        while not self.audio_queue.empty():
-            self.audio_queue.get()
-
-        self.recording = True
-        audio_chunks = []
-        last_speech_time = time.time()
-        speech_detected = False
-
-        # Silero VAD requires exactly 512 samples for 16kHz (32ms chunks)
-        vad_chunk_size = 512
-        vad_buffer = []
-
-        stream = sd.InputStream(
-            callback=self.audio_callback,
-            channels=1,
-            samplerate=self.sample_rate,
-            blocksize=int(self.sample_rate * 0.1),  # 100ms blocks
-        )
-
-        with stream:
-            while self.recording:
-                try:
-                    # Get audio data from queue
-                    data = self.audio_queue.get(timeout=0.1)
-                    audio_chunks.append(data)
-                    vad_buffer.append(data.flatten())
-
-                    # Accumulate enough samples for VAD
-                    total_samples = sum(len(chunk) for chunk in vad_buffer)
-
-                    # Process VAD when we have enough data
-                    while total_samples >= vad_chunk_size:
-                        # Concatenate buffer
-                        vad_audio = np.concatenate(vad_buffer)
-
-                        # Extract exactly vad_chunk_size samples
-                        vad_chunk = vad_audio[:vad_chunk_size]
-                        remaining = vad_audio[vad_chunk_size:]
-
-                        # Update buffer with remaining data
-                        vad_buffer = [remaining] if len(remaining) > 0 else []
-                        total_samples = len(remaining)
-
-                        # Run VAD on the chunk
-                        audio_tensor = torch.from_numpy(vad_chunk).float()
-                        speech_prob = self.vad_model(audio_tensor, self.sample_rate).item()
-
-                        # Speech detected if probability > 0.5
-                        if speech_prob > 0.5:
-                            speech_detected = True
-                            last_speech_time = time.time()
-
-                        # Stop recording if we've detected speech and then silence
-                        if speech_detected and (time.time() - last_speech_time) > self.silence_duration:
-                            self.recording = False
-                            break
-
-                except queue.Empty:
-                    # Check for timeout if speech was detected
-                    if speech_detected and (time.time() - last_speech_time) > self.silence_duration:
-                        self.recording = False
-                        break
-                    continue
-
-        # Concatenate all audio chunks
-        if audio_chunks:
-            audio_np = np.concatenate(audio_chunks, axis=0).flatten()
-            return audio_np
-        return np.array([])
-
-    def transcribe(self, audio_data):
-        """
-        Transcribe audio data to text using faster-whisper.
+        Transcribe audio data to text.
 
         Args:
-            audio_data: numpy array of audio samples
+            audio_data: numpy array of int16 audio samples at 16kHz
+            strip_wake_word: if True, remove "hey rex" from start of transcription
 
         Returns:
-            str: Transcribed text
+            Transcribed text, or empty string if no speech detected.
         """
         if len(audio_data) == 0:
             return ""
 
-        # Faster-whisper expects float32 audio
-        audio_float32 = audio_data.astype(np.float32)
+        # Convert int16 to float32 for Whisper
+        audio_float = audio_data.astype(np.float32) / 32768.0
 
-        # Transcribe
-        segments, info = self.whisper_model.transcribe(
-            audio_float32,
+        segments, _ = self._model.transcribe(
+            audio_float,
             language="en",
-            beam_size=5,
-            vad_filter=True,  # Use built-in VAD filtering for better accuracy
+            beam_size=5,  # This is already the default but it's kept for clarity
+            vad_filter=True,
         )
 
-        # Combine all segments into a single transcription
-        transcription = " ".join([segment.text for segment in segments]).strip()
+        text = " ".join(seg.text for seg in segments).strip()
 
-        return transcription
+        if strip_wake_word:
+            text = self._strip_wake_word(text)
 
-    def listen_and_transcribe(self):
-        """
-        Complete workflow: record speech with VAD and transcribe.
+        return text
 
-        Returns:
-            str: Transcribed text
-        """
-        print("Listening for speech...")
-        audio_data = self.record_until_silence()
-
-        if len(audio_data) == 0:
-            return ""
-
-        print("Transcribing...")
-        transcription = self.transcribe(audio_data)
-        return transcription
-
-
-def get_transcription(recorder=None, debug=False) -> str:
-    if not recorder:
-        recorder = SpeechRecorder(sample_rate=16000, silence_duration=1.5)
-
-    if debug:
-        print("Listening for user speech...")
-    audio_data = recorder.record_until_silence()
-
-    if debug:
-        print("End of speech detected. Transcribing now...")
-    transcription = recorder.transcribe(audio_data)
-
-    if debug:
-        print(f"\nTranscription of user speech:\n{transcription}")
-    if transcription.strip():
-        return transcription
-    return "No speech detected or transcription failed."
+    def _strip_wake_word(self, text: str) -> str:
+        """Remove wake word variations from the start of transcription."""
+        # Common variations Whisper might produce
+        patterns = [
+            r"^hey\s*rex[,.\s]*",
+            r"^hay\s*rex[,.\s]*",
+            r"^hey\s*racks[,.\s]*",
+            r"^hey\s*wrecks[,.\s]*",
+        ]
+        result = text
+        for pattern in patterns:
+            result = re.sub(pattern, "", result, flags=re.IGNORECASE)
+        return result.strip()

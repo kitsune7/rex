@@ -1,3 +1,3 @@
-from .stt import SpeechRecorder, get_transcription
+from .stt import Transcriber
 
-__all__ = ["SpeechRecorder", "get_transcription"]
+__all__ = ["Transcriber"]

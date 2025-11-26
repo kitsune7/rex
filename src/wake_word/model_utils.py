@@ -1,6 +1,5 @@
 """Utilities for managing wake word models."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -17,24 +16,14 @@ def ensure_openwakeword_models() -> bool:
         bool: True if models are available, False if download failed
     """
     try:
-        # Check if the required openwakeword models exist
-        # These are stored in the openwakeword package directory
         import openwakeword
+
         openwakeword_dir = Path(openwakeword.__file__).parent
         resources_dir = openwakeword_dir / "resources" / "models"
 
-        # Required model files for openwakeword to function
-        required_models = [
-            "melspectrogram.onnx",
-            "embedding_model.onnx",
-            "silero_vad.onnx"
-        ]
+        required_models = ["melspectrogram.onnx", "embedding_model.onnx", "silero_vad.onnx"]
 
-        # Check if all required models exist
-        models_exist = all(
-            (resources_dir / model).exists()
-            for model in required_models
-        )
+        models_exist = all((resources_dir / model).exists() for model in required_models)
 
         if not models_exist:
             print("📦 First-time setup: Downloading required openwakeword models...")
@@ -42,6 +31,7 @@ def ensure_openwakeword_models() -> bool:
             print()
 
             from openwakeword.utils import download_models
+
             download_models()
 
             print()
@@ -53,5 +43,7 @@ def ensure_openwakeword_models() -> bool:
     except Exception as e:
         print(f"❌ Error downloading openwakeword models: {e}", file=sys.stderr)
         print("   Please try manually running:", file=sys.stderr)
-        print('   uv run python -c "from openwakeword.utils import download_models; download_models()"', file=sys.stderr)
+        print(
+            '   uv run python -c "from openwakeword.utils import download_models; download_models()"', file=sys.stderr
+        )
         return False

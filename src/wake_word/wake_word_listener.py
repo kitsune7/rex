@@ -1,205 +1,190 @@
 """
-Custom Wake Word Detector using openWakeWord
-Continuously listens for a custom wake word and prints detections.
+Wake Word Listener with Rolling Audio Buffer
+
+Continuously captures audio into a rolling buffer while detecting wake words.
+When wake word is detected, continues recording until silence, then returns
+the complete audio (buffered + new) for transcription.
 """
 
-import os
+import collections
+import signal
 import sys
 import time
+
 import numpy as np
-import pyaudio
+import sounddevice as sd
+import torch
 from openwakeword import Model
-import argparse
-from collections import deque
-import threading
 from pathlib import Path
+from silero_vad import load_silero_vad
 
 from .model_utils import ensure_openwakeword_models
 
 
 class WakeWordListener:
-    def __init__(self, model_path, threshold=0.5, chunk_size=1280, cooldown_period=2.0):
+    def __init__(
+        self,
+        model_path: str,
+        threshold: float = 0.5,
+        buffer_duration: float = 3.0,
+        silence_duration: float = 1.5,
+    ):
         """
-        Initialize the wake word listener.
+        Initialize the wake word listener with rolling buffer.
 
         Args:
-            model_path: Path to the .onnx model file
+            model_path: Path to the .onnx wake word model file
             threshold: Detection threshold (0.0 to 1.0)
-            chunk_size: Audio chunk size (default 1280 for 80ms at 16kHz)
-            cooldown_period: Minimum time between detections in seconds (default 2.0)
+            buffer_duration: Seconds of audio to keep in rolling buffer
+            silence_duration: Seconds of silence to stop recording after wake word
         """
-        self.model_path = model_path
         self.threshold = threshold
-        self.chunk_size = chunk_size
-        self.cooldown_period = cooldown_period
+        self.sample_rate = 16000
+        self.chunk_size = 1280  # 80ms chunks for wake word detection
+        self.buffer_duration = buffer_duration
+        self.silence_duration = silence_duration
 
-        # Audio parameters (openWakeWord expects 16kHz, mono, int16)
-        self.format = pyaudio.paInt16
-        self.channels = 1
-        self.rate = 16000
+        # Rolling buffer: stores last N seconds of audio samples
+        buffer_samples = int(self.sample_rate * buffer_duration)
+        self._ring_buffer = collections.deque(maxlen=buffer_samples)
 
-        # Ensure openwakeword resource models are available
+        # Ensure openwakeword models are available
         if not ensure_openwakeword_models():
             print("❌ Failed to download required models")
             sys.exit(1)
 
-        # Initialize model
-        print(f"Loading model from: {model_path}")
-        self.model = Model(wakeword_models=[model_path], inference_framework="onnx")
+        # Load wake word model
+        print(f"Loading wake word model from: {model_path}")
+        self._wake_model = Model(wakeword_models=[model_path], inference_framework="onnx")
 
-        # Get model name for display
-        self.model_name = os.path.splitext(os.path.basename(model_path))[0]
+        # Load VAD model for end-of-speech detection
+        print("Loading VAD model...")
+        self._vad_model = load_silero_vad()
 
-        # Initialize PyAudio
-        self.audio = pyaudio.PyAudio()
-        self.stream = None
+        # State
+        self._interrupted = False
+        self._stream = None
+        signal.signal(signal.SIGINT, self._signal_handler)
 
-        # Detection state
-        self.is_running = False
-        self.detection_count = 0
-        self.last_detection_time = 0
+    def _signal_handler(self, signum, frame):
+        """Handle Ctrl+C gracefully."""
+        self._interrupted = True
 
-    def start_listening(self):
-        """Start the audio stream and begin listening."""
-        try:
-            # Open audio stream
-            self.stream = self.audio.open(
-                format=self.format,
-                channels=self.channels,
-                rate=self.rate,
-                input=True,
-                frames_per_buffer=self.chunk_size,
-                stream_callback=None,  # We'll use blocking mode
-            )
-
-            self.is_running = True
-            print(f"\n🎤 Listening for wake word: '{self.model_name}'")
-            print(f"   Threshold: {self.threshold}")
-            print(f"   Press Ctrl+C to stop\n")
-            print("-" * 50)
-
-            # Main listening loop
-            while self.is_running:
-                # Read audio chunk
-                audio_data = self.stream.read(self.chunk_size, exception_on_overflow=False)
-
-                # Convert bytes to numpy array
-                audio_array = np.frombuffer(audio_data, dtype=np.int16)
-
-                # Run inference
-                prediction = self.model.predict(audio_array)
-
-                # Check detection for our model
-                for mdl_name, score in prediction.items():
-                    if score >= self.threshold:
-                        current_time = time.time()
-                        if current_time - self.last_detection_time >= self.cooldown_period:
-                            self.handle_detection(mdl_name, score)
-                            self.last_detection_time = current_time
-
-        except KeyboardInterrupt:
-            print("\n\n🛑 Stopping listener...")
-        except Exception as e:
-            print(f"❌ Error: {e}")
-        finally:
-            self.stop_listening()
-
-    def handle_detection(self, model_name, score):
-        """Handle wake word detection."""
-        self.detection_count += 1
-        timestamp = time.strftime("%H:%M:%S")
-
-        # Print detection with formatting
-        print(f"🔔 [{timestamp}] WAKE WORD DETECTED! #{self.detection_count}")
-        print(f"   Model: {model_name}")
-        print(f"   Confidence: {score:.3f}")
-        print("-" * 50)
-
-        # Here you can add any additional logic for what happens after detection
-        # For example:
-        # - Play a sound
-        # - Trigger another action
-        # - Start recording for speech recognition
-
-    def wait_for_detection(self):
+    def wait_for_wake_word_and_speech(self) -> np.ndarray | None:
         """
-        Wait for a single wake word detection and return.
-        Returns True when wake word is detected, False if interrupted.
+        Wait for wake word, then capture speech until silence.
+
+        Returns:
+            numpy array of audio samples (including buffered pre-wake-word audio),
+            or None if interrupted.
         """
+        self._interrupted = False
+        self._ring_buffer.clear()
+        self._wake_model.reset()
+
+        # Open audio stream
+        self._stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype=np.int16,
+            blocksize=self.chunk_size,
+        )
+
         try:
-            # Open audio stream if not already open
-            if self.stream is None:
-                self.stream = self.audio.open(
-                    format=self.format,
-                    channels=self.channels,
-                    rate=self.rate,
-                    input=True,
-                    frames_per_buffer=self.chunk_size,
-                    stream_callback=None,
-                )
+            with self._stream:
+                # Phase 1: Listen for wake word while filling buffer
+                if not self._wait_for_wake_word():
+                    return None
 
-            self.is_running = True
+                # Phase 2: Continue recording until silence
+                return self._record_until_silence()
 
-            # Listen until wake word is detected
-            while self.is_running:
-                # Read audio chunk
-                audio_data = self.stream.read(self.chunk_size, exception_on_overflow=False)
-
-                # Convert bytes to numpy array
-                audio_array = np.frombuffer(audio_data, dtype=np.int16)
-
-                # Run inference
-                prediction = self.model.predict(audio_array)
-
-                # Check detection for our model
-                for mdl_name, score in prediction.items():
-                    if score >= self.threshold:
-                        current_time = time.time()
-                        if current_time - self.last_detection_time >= self.cooldown_period:
-                            self.detection_count += 1
-                            self.last_detection_time = current_time
-                            return True
-
-        except KeyboardInterrupt:
-            self.is_running = False
-            return False
         except Exception as e:
-            print(f"❌ Wake word detection error: {e}")
-            return False
+            print(f"❌ Audio error: {e}")
+            return None
 
-    def reset_detection_state(self):
-        """Reset the model state and clear audio buffer."""
-        # Reset model's internal state
-        self.model.reset()
+    def _wait_for_wake_word(self) -> bool:
+        """
+        Listen for wake word while maintaining rolling buffer.
 
-        # Clear any remaining audio in the buffer
-        if self.stream is not None and self.stream.is_active():
-            # Read and discard any buffered audio chunks
+        Returns:
+            True if wake word detected, False if interrupted.
+        """
+        while not self._interrupted:
+            audio_chunk, _ = self._stream.read(self.chunk_size)
+            audio_chunk = audio_chunk.flatten()
+
+            # Add to rolling buffer
+            self._ring_buffer.extend(audio_chunk)
+
+            # Check for wake word
+            predictions = self._wake_model.predict(audio_chunk)
+            for score in predictions.values():
+                if score >= self.threshold:
+                    return True
+
+        return False
+
+    def _record_until_silence(self) -> np.ndarray:
+        """
+        Continue recording after wake word until VAD detects silence.
+
+        Returns:
+            Complete audio: rolling buffer contents + new audio after wake word.
+        """
+        # Start with buffered audio
+        audio_chunks = [np.array(self._ring_buffer, dtype=np.int16)]
+
+        last_speech_time = time.time()
+        speech_detected = False
+        vad_chunk_size = 512  # Silero VAD requires 512 samples at 16kHz
+        vad_buffer = []
+
+        while not self._interrupted:
+            audio_chunk, _ = self._stream.read(self.chunk_size)
+            audio_chunk = audio_chunk.flatten()
+            audio_chunks.append(audio_chunk)
+            vad_buffer.append(audio_chunk)
+
+            # Process VAD when we have enough samples
+            total_samples = sum(len(c) for c in vad_buffer)
+            while total_samples >= vad_chunk_size:
+                vad_audio = np.concatenate(vad_buffer)
+                vad_chunk = vad_audio[:vad_chunk_size]
+                remaining = vad_audio[vad_chunk_size:]
+                vad_buffer = [remaining] if len(remaining) > 0 else []
+                total_samples = len(remaining)
+
+                # Run VAD
+                audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
+                speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
+
+                if speech_prob > 0.5:
+                    speech_detected = True
+                    last_speech_time = time.time()
+
+                # Stop if speech was detected and now silent
+                if speech_detected and (time.time() - last_speech_time) > self.silence_duration:
+                    return np.concatenate(audio_chunks)
+
+        return np.concatenate(audio_chunks) if audio_chunks else np.array([], dtype=np.int16)
+
+    def stop(self):
+        """Stop listening and clean up."""
+        self._interrupted = True
+        if self._stream is not None:
             try:
-                while self.stream.get_read_available() > 0:
-                    self.stream.read(self.stream.get_read_available(), exception_on_overflow=False)
-            except:
-                pass  # Ignore errors during buffer clearing
-
-    def stop_listening(self):
-        """Clean up audio resources."""
-        self.is_running = False
-
-        if self.stream is not None:
-            self.stream.stop_stream()
-            self.stream.close()
-
-        self.audio.terminate()
-
-        print(f"\n📊 Total detections: {self.detection_count}")
-        print("Goodbye! 👋")
+                self._stream.close()
+            except Exception:
+                pass
 
 
 def run_wake_word_listener(args):
+    """CLI entry point for standalone wake word testing."""
     base_model_path = Path("models/wake_word_models")
     model_path = base_model_path / args.model / f"{args.model}.onnx"
 
-    if not os.path.exists(model_path):
+    if not model_path.exists():
         print(f"❌ Error: Model file not found at: {model_path}")
         sys.exit(1)
 
@@ -207,7 +192,19 @@ def run_wake_word_listener(args):
         print(f"❌ Error: Threshold must be between 0.0 and 1.0")
         sys.exit(1)
 
-    listener = WakeWordListener(
-        model_path=str(model_path), threshold=args.threshold, chunk_size=args.chunk_size, cooldown_period=args.cooldown
-    )
-    listener.start_listening()
+    listener = WakeWordListener(model_path=str(model_path), threshold=args.threshold)
+
+    print(f"\n🎤 Listening for wake word...")
+    print("   Press Ctrl+C to stop\n")
+
+    try:
+        while True:
+            audio = listener.wait_for_wake_word_and_speech()
+            if audio is None:
+                break
+            print(f"🔔 Captured {len(audio) / 16000:.1f}s of audio")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        listener.stop()
+        print("\nGoodbye! 👋")
