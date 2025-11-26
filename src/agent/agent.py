@@ -8,32 +8,31 @@ MAX_HISTORY_MESSAGES = 20
 
 
 def extract_text_response(response):
-    if hasattr(response, "get") and "messages" in response:
-        agent_messages = response["messages"]
-        if agent_messages:
-            last_message = agent_messages[-1]
-            if hasattr(last_message, "content"):
-                content = last_message.content
+    # Handle non-dict responses
+    if not hasattr(response, "get") or "messages" not in response:
+        return str(response)
 
-                # Handle the case where content is a list of dictionaries with 'text' field
-                if isinstance(content, list) and len(content) > 0:
-                    # Extract just the text content, ignoring extras
-                    if isinstance(content[0], dict) and "text" in content[0]:
-                        text_response = content[0]["text"]
-                    else:
-                        text_response = str(content[0])
-                elif isinstance(content, str):
-                    text_response = content
-                else:
-                    text_response = str(content)
-            else:
-                text_response = str(last_message)
-        else:
-            text_response = "[No response generated]"
-    else:
-        text_response = str(response)
+    agent_messages = response["messages"]
+    if not agent_messages:
+        return "[No response generated]"
 
-    return text_response
+    last_message = agent_messages[-1]
+    if not hasattr(last_message, "content"):
+        return str(last_message)
+
+    content = last_message.content
+
+    # Handle string content directly
+    if isinstance(content, str):
+        return content
+
+    # Handle list content (e.g., list of dicts with 'text' field)
+    if isinstance(content, list) and len(content) > 0:
+        if isinstance(content[0], dict) and "text" in content[0]:
+            return content[0]["text"]
+        return str(content[0])
+
+    return str(content)
 
 
 def run_voice_agent(query: str, history: list | None = None) -> tuple[str, list]:

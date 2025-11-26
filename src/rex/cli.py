@@ -13,6 +13,14 @@ from wake_word.audio_feedback import ThinkingTone
 FOLLOW_UP_TIMEOUT = 5.0
 
 
+def _end_conversation(history, timer_manager):
+    """End conversation and return to wake word listening mode."""
+    if history is not None:
+        timer_manager.unmute()
+    print("🎤 Listening for 'Hey Rex'...")
+    return None
+
+
 def main():
     """Main voice assistant loop with wake word detection and rolling buffer."""
     print("🚀 Starting Rex Voice Assistant...")
@@ -49,9 +57,7 @@ def main():
                 if audio is None:
                     # Timeout - user didn't respond, end conversation
                     print("⏱️ No response received, ending conversation.")
-                    history = None
-                    timer_manager.unmute()
-                    print("🎤 Listening for 'hey rex'...")
+                    history = _end_conversation(history, timer_manager)
                     continue
 
             if audio is None or listener._interrupted:
@@ -74,8 +80,7 @@ def main():
             if transcription.strip().lower() in ("stop", "stop the timer"):
                 if timer_manager.stop_any_ringing():
                     print("🔕 Timer alarm stopped.")
-                history = None  # End conversation after stop command
-                print("🎤 Listening for 'hey rex'...")
+                history = _end_conversation(history, timer_manager)
                 continue
 
             try:
@@ -94,15 +99,13 @@ def main():
                 # Check if Rex asked a follow-up question
                 if not response.strip().endswith("?"):
                     # Rex didn't ask a question - conversation is done
-                    history = None
-                    print("🎤 Listening for 'hey rex'...")
+                    history = _end_conversation(history, timer_manager)
                 # If Rex asked a question, keep history and loop will listen for follow-up
 
             except Exception as e:
                 print(f"❌ Agent error: {e}")
                 speak_text("Sorry, I encountered an error processing your request.", voice)
-                history = None  # Reset conversation on error
-                print("🎤 Listening for 'hey rex'...")
+                history = _end_conversation(history, timer_manager)
 
     except KeyboardInterrupt:
         print("\n\n🛑 Shutting down Rex...")

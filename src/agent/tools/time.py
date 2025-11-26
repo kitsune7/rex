@@ -8,13 +8,3 @@ def get_current_time() -> str:
     """Get the current time in 12-hour format with AM/PM."""
     now = datetime.now()
     return now.strftime("%I:%M %p")
-
-
-# @tool
-# def set_timer():
-#     pass
-
-
-# @tool
-# def check_timer():
-#     pass

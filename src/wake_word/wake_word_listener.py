@@ -72,6 +72,40 @@ class WakeWordListener:
         """Handle Ctrl+C gracefully."""
         self._interrupted = True
 
+    def _process_vad_buffer(self, vad_buffer: list, vad_chunk_size: int = 512):
+        """
+        Process VAD buffer and yield speech probabilities for complete chunks.
+
+        Args:
+            vad_buffer: List of audio chunks to process.
+            vad_chunk_size: Size of chunks for VAD (default 512 for Silero at 16kHz).
+
+        Yields:
+            Tuple of (speech_probability, updated_vad_buffer) for each complete chunk.
+        """
+        total_samples = sum(len(c) for c in vad_buffer)
+        while total_samples >= vad_chunk_size:
+            vad_audio = np.concatenate(vad_buffer)
+            vad_chunk = vad_audio[:vad_chunk_size]
+            remaining = vad_audio[vad_chunk_size:]
+            vad_buffer = [remaining] if len(remaining) > 0 else []
+            total_samples = len(remaining)
+
+            # Run VAD
+            audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
+            speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
+
+            yield speech_prob, vad_buffer
+
+    def _create_audio_stream(self) -> sd.InputStream:
+        """Create and return an audio input stream with standard settings."""
+        return sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype=np.int16,
+            blocksize=self.chunk_size,
+        )
+
     def wait_for_wake_word_and_speech(self, on_wake_word: Callable[[], None] | None = None) -> np.ndarray | None:
         """
         Wait for wake word, then capture speech until silence.
@@ -88,13 +122,7 @@ class WakeWordListener:
         self._ring_buffer.clear()
         self._wake_model.reset()
 
-        # Open audio stream
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype=np.int16,
-            blocksize=self.chunk_size,
-        )
+        self._stream = self._create_audio_stream()
 
         try:
             with self._stream:
@@ -163,7 +191,6 @@ class WakeWordListener:
 
         last_speech_time = time.time()
         speech_detected = False
-        vad_chunk_size = 512  # Silero VAD requires 512 samples at 16kHz
         vad_buffer = []
 
         while not self._interrupted:
@@ -172,19 +199,7 @@ class WakeWordListener:
             audio_chunks.append(audio_chunk)
             vad_buffer.append(audio_chunk)
 
-            # Process VAD when we have enough samples
-            total_samples = sum(len(c) for c in vad_buffer)
-            while total_samples >= vad_chunk_size:
-                vad_audio = np.concatenate(vad_buffer)
-                vad_chunk = vad_audio[:vad_chunk_size]
-                remaining = vad_audio[vad_chunk_size:]
-                vad_buffer = [remaining] if len(remaining) > 0 else []
-                total_samples = len(remaining)
-
-                # Run VAD
-                audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
-                speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
-
+            for speech_prob, vad_buffer in self._process_vad_buffer(vad_buffer):
                 if speech_prob > 0.5:
                     speech_detected = True
                     last_speech_time = time.time()
@@ -213,21 +228,14 @@ class WakeWordListener:
         self._interrupted = False
         self._ring_buffer.clear()
 
-        vad_chunk_size = 512  # Silero VAD requires 512 samples at 16kHz
         vad_buffer = []
         start_time = time.time()
 
-        # Open audio stream
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype=np.int16,
-            blocksize=self.chunk_size,
-        )
+        self._stream = self._create_audio_stream()
 
         try:
             with self._stream:
-                # Phase 1: Wait for speech to start (with timeout)
+                # Wait for speech to start (with timeout)
                 while not self._interrupted:
                     # Check timeout
                     if (time.time() - start_time) > timeout:
@@ -240,19 +248,7 @@ class WakeWordListener:
                     self._ring_buffer.extend(audio_chunk)
                     vad_buffer.append(audio_chunk)
 
-                    # Process VAD when we have enough samples
-                    total_samples = sum(len(c) for c in vad_buffer)
-                    while total_samples >= vad_chunk_size:
-                        vad_audio = np.concatenate(vad_buffer)
-                        vad_chunk = vad_audio[:vad_chunk_size]
-                        remaining = vad_audio[vad_chunk_size:]
-                        vad_buffer = [remaining] if len(remaining) > 0 else []
-                        total_samples = len(remaining)
-
-                        # Run VAD
-                        audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
-                        speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
-
+                    for speech_prob, vad_buffer in self._process_vad_buffer(vad_buffer):
                         if speech_prob > 0.5:
                             # Speech detected! Play ascending tone
                             play_listening_tone()
