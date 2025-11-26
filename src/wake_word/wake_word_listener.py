@@ -19,6 +19,7 @@ import torch
 from openwakeword import Model
 from silero_vad import load_silero_vad
 
+from .audio_feedback import play_done_tone, play_listening_tone
 from .model_utils import ensure_openwakeword_models
 
 
@@ -103,12 +104,20 @@ class WakeWordListener:
 
                 print("🔔 Wake word detected! Transcribing audio...")
 
+                # Play ascending tone to indicate listening
+                play_listening_tone()
+
                 # Invoke callback (e.g., to mute timer sounds)
                 if on_wake_word:
                     on_wake_word()
 
                 # Phase 2: Continue recording until silence
-                return self._record_until_silence()
+                audio = self._record_until_silence()
+
+                # Play descending tone to indicate done listening
+                play_done_tone()
+
+                return audio
 
         except Exception as e:
             print(f"❌ Audio error: {e}")
@@ -245,7 +254,10 @@ class WakeWordListener:
                         speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
 
                         if speech_prob > 0.5:
-                            # Speech detected! Trim ring buffer to only recent audio
+                            # Speech detected! Play ascending tone
+                            play_listening_tone()
+
+                            # Trim ring buffer to only recent audio
                             # to avoid including long periods of silence from wait phase
                             recent_samples = int(0.5 * self.sample_rate)  # 0.5 seconds
                             buffer_array = np.array(self._ring_buffer, dtype=np.int16)
@@ -255,7 +267,12 @@ class WakeWordListener:
                                 if len(buffer_array) > recent_samples
                                 else buffer_array
                             )
-                            return self._record_until_silence(include_buffer=True)
+                            audio = self._record_until_silence(include_buffer=True)
+
+                            # Play descending tone to indicate done listening
+                            play_done_tone()
+
+                            return audio
 
                 return None
 
