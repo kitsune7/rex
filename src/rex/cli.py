@@ -17,6 +17,65 @@ FOLLOW_UP_TIMEOUT = 5.0
 STOP_PHRASES = ("stop", "nevermind", "never mind", "cancel", "forget it")
 
 
+def _handle_special_command(normalized: str, history: list | None, timer_manager) -> tuple[bool, list | None]:
+    """
+    Handle special voice commands (stop, nevermind, etc).
+
+    Returns:
+        (was_handled, updated_history) - if was_handled is True, skip agent processing
+    """
+    # Timer stop command (works anytime)
+    if normalized in ("stop", "stop the timer"):
+        if timer_manager.stop_any_ringing():
+            print("🔕 Timer alarm stopped.")
+        return True, None
+
+    # Stop phrases end conversation (only during follow-up)
+    if history is not None and normalized in STOP_PHRASES:
+        return True, None
+
+    return False, history
+
+
+def _process_turn(transcription: str, history: list | None, speaker, voice) -> tuple[list | None, bool]:
+    """
+    Process one conversation turn: run agent, speak response, handle interruption.
+
+    Returns:
+        (updated_history, should_continue_conversation)
+    """
+    try:
+        print("🤔 Thinking...")
+        with ThinkingTone():
+            response, history = run_voice_agent(transcription, history)
+
+        print(f"\n🤖 Rex: {response}\n")
+        was_interrupted = speaker.speak_interruptibly(response)
+
+        if was_interrupted:
+            print("🛑 Interrupted!")
+            if history and isinstance(history[-1], AIMessage):
+                history[-1] = AIMessage(content=history[-1].content + " [interrupted]")
+            return history, True  # Continue conversation
+
+        # End conversation if Rex didn't ask a question
+        should_continue = response.strip().endswith("?")
+        return history, should_continue
+
+    except Exception as e:
+        print(f"❌ Agent error: {e}")
+        speak_text("Sorry, I encountered an error processing your request.", voice)
+        return None, False
+
+
+def _end_conversation(history, timer_manager):
+    """End conversation and return to wake word listening mode."""
+    if history is not None:
+        timer_manager.unmute()
+    print("🎤 Listening for 'Hey Rex'...")
+    return None
+
+
 def main():
     """Main voice assistant loop with wake word detection and rolling buffer."""
     print("🚀 Starting Rex Voice Assistant...")
@@ -72,43 +131,14 @@ def main():
 
             # --- Handle special commands ---
             normalized = transcription.strip().lower()
-
-            # Timer stop command (works anytime)
-            if normalized in ("stop", "stop the timer"):
-                if timer_manager.stop_any_ringing():
-                    print("🔕 Timer alarm stopped.")
-                history = _end_conversation(history, timer_manager)
-                continue
-
-            # Stop phrases end conversation (only during follow-up)
-            if history is not None and normalized in STOP_PHRASES:
+            was_handled, history = _handle_special_command(normalized, history, timer_manager)
+            if was_handled:
                 history = _end_conversation(history, timer_manager)
                 continue
 
             # --- Process with agent ---
-            try:
-                print("🤔 Thinking...")
-                with ThinkingTone():
-                    response, history = run_voice_agent(transcription, history)
-
-                print(f"\n🤖 Rex: {response}\n")
-                was_interrupted = speaker.speak_interruptibly(response)
-
-                if was_interrupted:
-                    print("🛑 Interrupted!")
-                    # Mark the response as interrupted in history
-                    if history and isinstance(history[-1], AIMessage):
-                        history[-1] = AIMessage(content=history[-1].content + " [interrupted]")
-                    # Loop continues - will listen for follow-up
-                    continue
-
-                # If Rex didn't ask a question, end conversation
-                if not response.strip().endswith("?"):
-                    history = _end_conversation(history, timer_manager)
-
-            except Exception as e:
-                print(f"❌ Agent error: {e}")
-                speak_text("Sorry, I encountered an error processing your request.", voice)
+            history, should_continue = _process_turn(transcription, history, speaker, voice)
+            if not should_continue:
                 history = _end_conversation(history, timer_manager)
 
     except KeyboardInterrupt:
@@ -117,14 +147,6 @@ def main():
         listener.stop()
 
     return 0
-
-
-def _end_conversation(history, timer_manager):
-    """End conversation and return to wake word listening mode."""
-    if history is not None:
-        timer_manager.unmute()
-    print("🎤 Listening for 'Hey Rex'...")
-    return None
 
 
 if __name__ == "__main__":

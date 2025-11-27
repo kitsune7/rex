@@ -7,12 +7,9 @@ the complete audio (buffered + new) for transcription.
 """
 
 import collections
-import signal
-import sys
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -102,6 +99,42 @@ class WakeWordMonitor:
         self._stop_event.clear()
 
 
+class VADProcessor:
+    """Processes audio chunks through VAD model to detect speech."""
+
+    def __init__(self, vad_model, sample_rate: int, chunk_size: int = 512):
+        self._vad_model = vad_model
+        self._sample_rate = sample_rate
+        self._chunk_size = chunk_size
+        self._buffer: list[np.ndarray] = []
+
+    def add_audio(self, chunk: np.ndarray):
+        """Add an audio chunk to the buffer."""
+        self._buffer.append(chunk)
+
+    def process(self) -> list[float]:
+        """Process buffered audio and return speech probabilities for complete chunks."""
+        probabilities = []
+        total_samples = sum(len(chunk) for chunk in self._buffer)
+
+        while total_samples >= self._chunk_size:
+            vad_audio = np.concatenate(self._buffer)
+            vad_chunk = vad_audio[: self._chunk_size]
+            remaining = vad_audio[self._chunk_size :]
+            self._buffer = [remaining] if len(remaining) > 0 else []
+            total_samples = len(remaining)
+
+            audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
+            speech_prob = self._vad_model(audio_tensor, self._sample_rate).item()
+            probabilities.append(speech_prob)
+
+        return probabilities
+
+    def reset(self):
+        """Clear the audio buffer."""
+        self._buffer.clear()
+
+
 class WakeWordListener:
     def __init__(
         self,
@@ -131,8 +164,7 @@ class WakeWordListener:
 
         # Ensure openwakeword models are available
         if not ensure_openwakeword_models():
-            print("❌ Failed to download required models")
-            sys.exit(1)
+            raise RuntimeError("Failed to download required openwakeword models")
 
         # Load wake word model
         print(f"Loading wake word model from: {model_path}")
@@ -145,36 +177,6 @@ class WakeWordListener:
         # State
         self._interrupted = False
         self._stream = None
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-    def _signal_handler(self, signum, frame):
-        """Handle Ctrl+C gracefully."""
-        self._interrupted = True
-
-    def _process_vad_buffer(self, vad_buffer: list, vad_chunk_size: int = 512):
-        """
-        Process VAD buffer and yield speech probabilities for complete chunks.
-
-        Args:
-            vad_buffer: List of audio chunks to process.
-            vad_chunk_size: Size of chunks for VAD (default 512 for Silero at 16kHz).
-
-        Yields:
-            Tuple of (speech_probability, updated_vad_buffer) for each complete chunk.
-        """
-        total_samples = sum(len(c) for c in vad_buffer)
-        while total_samples >= vad_chunk_size:
-            vad_audio = np.concatenate(vad_buffer)
-            vad_chunk = vad_audio[:vad_chunk_size]
-            remaining = vad_audio[vad_chunk_size:]
-            vad_buffer = [remaining] if len(remaining) > 0 else []
-            total_samples = len(remaining)
-
-            # Run VAD
-            audio_tensor = torch.from_numpy(vad_chunk.astype(np.float32))
-            speech_prob = self._vad_model(audio_tensor, self.sample_rate).item()
-
-            yield speech_prob, vad_buffer
 
     def _create_audio_stream(self) -> sd.InputStream:
         """Create and return an audio input stream with standard settings."""
@@ -270,15 +272,15 @@ class WakeWordListener:
 
         last_speech_time = time.time()
         speech_detected = False
-        vad_buffer = []
+        vad = VADProcessor(self._vad_model, self.sample_rate)
 
         while not self._interrupted:
             audio_chunk, _ = self._stream.read(self.chunk_size)
             audio_chunk = audio_chunk.flatten()
             audio_chunks.append(audio_chunk)
-            vad_buffer.append(audio_chunk)
+            vad.add_audio(audio_chunk)
 
-            for speech_prob, vad_buffer in self._process_vad_buffer(vad_buffer):
+            for speech_prob in vad.process():
                 if speech_prob > 0.5:
                     speech_detected = True
                     last_speech_time = time.time()
@@ -307,7 +309,7 @@ class WakeWordListener:
         self._interrupted = False
         self._ring_buffer.clear()
 
-        vad_buffer = []
+        vad = VADProcessor(self._vad_model, self.sample_rate)
         start_time = time.time()
 
         self._stream = self._create_audio_stream()
@@ -325,9 +327,9 @@ class WakeWordListener:
 
                     # Keep audio in ring buffer in case speech started
                     self._ring_buffer.extend(audio_chunk)
-                    vad_buffer.append(audio_chunk)
+                    vad.add_audio(audio_chunk)
 
-                    for speech_prob, vad_buffer in self._process_vad_buffer(vad_buffer):
+                    for speech_prob in vad.process():
                         if speech_prob > 0.5:
                             # Speech detected! Play ascending tone
                             play_listening_tone()
@@ -361,34 +363,3 @@ class WakeWordListener:
                 self._stream.close()
             except Exception:
                 pass
-
-
-def run_wake_word_listener(args):
-    """CLI entry point for standalone wake word testing."""
-    base_model_path = Path("models/wake_word_models")
-    model_path = base_model_path / args.model / f"{args.model}.onnx"
-
-    if not model_path.exists():
-        print(f"❌ Error: Model file not found at: {model_path}")
-        sys.exit(1)
-
-    if not 0.0 <= args.threshold <= 1.0:
-        print(f"❌ Error: Threshold must be between 0.0 and 1.0")
-        sys.exit(1)
-
-    listener = WakeWordListener(model_path=str(model_path), threshold=args.threshold)
-
-    print(f"\n🎤 Listening for wake word...")
-    print("   Press Ctrl+C to stop\n")
-
-    try:
-        while True:
-            audio = listener.wait_for_wake_word_and_speech()
-            if audio is None:
-                break
-            print(f"🔔 Captured {len(audio) / 16000:.1f}s of audio")
-    except KeyboardInterrupt:
-        pass
-    finally:
-        listener.stop()
-        print("\nGoodbye! 👋")
