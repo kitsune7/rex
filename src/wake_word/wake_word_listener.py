@@ -27,7 +27,7 @@ from .model_utils import ensure_openwakeword_models
 class WakeWordMonitor:
     """
     Background wake word detector for interruption during TTS playback.
-    
+
     Runs in a separate thread and sets an event when wake word is detected.
     Use this to allow users to interrupt Rex while he's speaking.
     """
@@ -81,8 +81,7 @@ class WakeWordMonitor:
 
     def start(self):
         """Start monitoring for wake word in the background."""
-        self._detected_event.clear()
-        self._stop_event.clear()
+        self.reset()
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
 
@@ -100,6 +99,7 @@ class WakeWordMonitor:
     def reset(self):
         """Reset the detection state."""
         self._detected_event.clear()
+        self._stop_event.clear()
 
 
 class WakeWordListener:
@@ -338,9 +338,7 @@ class WakeWordListener:
                             buffer_array = np.array(self._ring_buffer, dtype=np.int16)
                             self._ring_buffer.clear()
                             self._ring_buffer.extend(
-                                buffer_array[-recent_samples:]
-                                if len(buffer_array) > recent_samples
-                                else buffer_array
+                                buffer_array[-recent_samples:] if len(buffer_array) > recent_samples else buffer_array
                             )
                             audio = self._record_until_silence(include_buffer=True)
 

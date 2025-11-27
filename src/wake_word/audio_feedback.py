@@ -85,11 +85,25 @@ def play_done_tone():
 
 
 class ThinkingTone:
-    """Looping D→A tone that plays while waiting for LLM inference."""
+    """Looping D→A tone that plays while waiting for LLM inference.
+
+    Can be used as a context manager:
+        with ThinkingTone():
+            # tone plays during this block
+            result = slow_operation()
+    """
 
     def __init__(self):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False  # Don't suppress exceptions
 
     def _generate_thinking_sequence(self) -> np.ndarray:
         """Generate a D→A tone sequence with faster timing."""
@@ -125,4 +139,3 @@ class ThinkingTone:
         """Stop the thinking tone."""
         self._stop_event.set()
         sd.stop()
-

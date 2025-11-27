@@ -1,8 +1,9 @@
-from langchain_openai import ChatOpenAI
-from langchain.agents import create_agent as create_langchain_agent
-from pydantic import SecretStr
-from datetime import date, datetime
+from datetime import date
+
 from dotenv import load_dotenv
+from langchain.agents import create_agent as create_langchain_agent
+from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 load_dotenv()
 

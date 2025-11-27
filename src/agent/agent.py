@@ -6,6 +6,18 @@ from langfuse.langchain import CallbackHandler
 # Maximum number of messages to keep in history to prevent unbounded growth
 MAX_HISTORY_MESSAGES = 20
 
+# Cached agent instance (stateless - all state comes from messages)
+_agent = None
+
+
+def _get_agent():
+    """Get or create the cached agent instance."""
+    global _agent
+    if _agent is None:
+        tools = [get_current_time, calculate, set_timer, check_timers, stop_timer]
+        _agent = create_agent(tools)
+    return _agent
+
 
 def extract_text_response(response):
     # Handle non-dict responses
@@ -48,8 +60,7 @@ def run_voice_agent(query: str, history: list | None = None) -> tuple[str, list]
         A tuple of (response_text, updated_history) where updated_history
         includes the new user message and agent response.
     """
-    tools = [get_current_time, calculate, set_timer, check_timers, stop_timer]
-    agent = create_agent(tools)
+    agent = _get_agent()
     langfuse_handler = CallbackHandler()
 
     # Initialize or use existing history
@@ -60,9 +71,7 @@ def run_voice_agent(query: str, history: list | None = None) -> tuple[str, list]
     history.append(HumanMessage(content=query))
 
     # Invoke agent with full conversation history
-    response = agent.invoke(
-        {"messages": history}, config={"callbacks": [langfuse_handler]}
-    )
+    response = agent.invoke({"messages": history}, config={"callbacks": [langfuse_handler]})
 
     # Extract text response
     text_response = extract_text_response(response)

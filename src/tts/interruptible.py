@@ -40,15 +40,10 @@ class InterruptibleSpeaker:
         Returns:
             True if speech was interrupted by wake word, False if completed normally.
         """
-        # Start wake word monitoring
         self._monitor.start()
 
         try:
-            # Speak with interrupt check callback
-            was_interrupted = speak_text(
-                text, self.voice, interrupt_check=self._monitor.was_detected
-            )
-            return was_interrupted
+            return speak_text(text, self.voice, interrupt_check=self._monitor.was_detected)
         finally:
             # Always stop monitoring when done
             self._monitor.stop()
