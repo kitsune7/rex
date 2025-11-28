@@ -21,6 +21,7 @@ dependencies = [
   "langchain-openai>=1.0.3",
   "langfuse>=3.10.1",
   "python-dotenv>=1.0.0",
+  "python-dateutil>=2.8.2",
   "pyaudio>=0.2.14",
 ]
 

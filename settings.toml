@@ -1,0 +1,4 @@
+[reminders]
+# Minutes to wait before retrying an undelivered reminder
+retry_minutes = 10
+
