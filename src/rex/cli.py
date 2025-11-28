@@ -9,6 +9,9 @@ from tts import load_voice, speak_text, InterruptibleSpeaker
 from stt import Transcriber
 from wake_word import WakeWordListener
 from wake_word.audio_feedback import ThinkingTone
+from .audio_setup import suppress_portaudio_warnings
+
+suppress_portaudio_warnings()
 
 # Timeout in seconds for waiting for follow-up responses
 FOLLOW_UP_TIMEOUT = 5.0

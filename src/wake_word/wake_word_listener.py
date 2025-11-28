@@ -78,6 +78,11 @@ class WakeWordMonitor:
 
     def start(self):
         """Start monitoring for wake word in the background."""
+        # Ensure any previous thread is fully stopped
+        if self._thread is not None and self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join(timeout=0.5)
+
         self.reset()
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
