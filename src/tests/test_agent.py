@@ -1,7 +1,5 @@
 """Tests for agent response extraction."""
 
-import pytest
-
 from agent.agent import extract_text_response
 
 

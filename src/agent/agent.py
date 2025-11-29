@@ -1,23 +1,23 @@
-from dataclasses import dataclass
 import uuid
+from dataclasses import dataclass
 
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langfuse.langchain import CallbackHandler
 from langgraph.types import Command
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from .base_agent import create_agent, create_checkpointer
 from .tools import (
-    get_current_time,
     calculate,
-    set_timer,
     check_timers,
-    stop_timer,
     create_reminder,
-    list_reminders,
-    update_reminder,
     delete_reminder,
+    get_current_time,
+    list_reminders,
+    set_timer,
+    stop_timer,
     tool_requires_confirmation,
+    update_reminder,
 )
-from langfuse.langchain import CallbackHandler
 
 # Maximum number of messages to keep in history to prevent unbounded growth
 MAX_HISTORY_MESSAGES = 20

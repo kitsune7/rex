@@ -10,9 +10,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dateutil import parser as dateutil_parser
 from langchain_core.tools import tool
+
+if TYPE_CHECKING:
+    from core.events import EventBus
 
 
 class ReminderStatus(Enum):
@@ -31,28 +35,33 @@ class Reminder:
 
 
 class ReminderManager:
-    """Manages reminders with SQLite persistence."""
+    """
+    Manages reminders with SQLite persistence.
 
-    _instance: "ReminderManager | None" = None
-    _lock = threading.Lock()
+    This is no longer a singleton - instances should be created via
+    the AppContext or create_reminder_manager() factory.
+    """
 
-    def __new__(cls) -> "ReminderManager":
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+    def __init__(self, db_path: str | Path = "data/reminders.db", event_bus: "EventBus | None" = None):
+        """
+        Initialize the reminder manager.
 
-    def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-
+        Args:
+            db_path: Path to the SQLite database file
+            event_bus: Optional event bus for emitting schedule change events
+        """
         self._db_lock = threading.Lock()
-        self._db_path = Path("data/reminders.db")
+        self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._event_bus = event_bus
         self._init_db()
+
+    def _emit_schedule_changed(self) -> None:
+        """Emit a schedule changed event if event bus is configured."""
+        if self._event_bus is not None:
+            from core.events import ReminderScheduleChanged
+
+            self._event_bus.emit(ReminderScheduleChanged())
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection."""
@@ -112,7 +121,7 @@ class ReminderManager:
                 )
                 conn.commit()
 
-                return Reminder(
+                reminder = Reminder(
                     id=cursor.lastrowid,
                     message=message,
                     due_datetime=due_datetime,
@@ -121,6 +130,9 @@ class ReminderManager:
                 )
             finally:
                 conn.close()
+
+        self._emit_schedule_changed()
+        return reminder
 
     def get_reminder(self, reminder_id: int) -> Reminder | None:
         """Get a reminder by ID."""
@@ -170,13 +182,38 @@ class ReminderManager:
                 now = datetime.now().isoformat()
                 cursor = conn.execute(
                     """
-                    SELECT * FROM reminders 
+                    SELECT * FROM reminders
                     WHERE status = ? AND due_datetime <= ?
                     ORDER BY due_datetime
                     """,
                     (ReminderStatus.PENDING.value, now),
                 )
                 return [self._row_to_reminder(row) for row in cursor.fetchall()]
+            finally:
+                conn.close()
+
+    def get_next_pending_time(self) -> datetime | None:
+        """
+        Get the due time of the next pending reminder.
+
+        Returns:
+            The earliest due_datetime among pending reminders, or None if no pending reminders.
+        """
+        with self._db_lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute(
+                    """
+                    SELECT MIN(due_datetime) as next_time
+                    FROM reminders
+                    WHERE status = ?
+                    """,
+                    (ReminderStatus.PENDING.value,),
+                )
+                row = cursor.fetchone()
+                if row and row["next_time"]:
+                    return datetime.fromisoformat(row["next_time"])
+                return None
             finally:
                 conn.close()
 
@@ -227,9 +264,15 @@ class ReminderManager:
                 # Fetch and return updated reminder
                 cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
                 row = cursor.fetchone()
-                return self._row_to_reminder(row) if row else None
+                result = self._row_to_reminder(row) if row else None
             finally:
                 conn.close()
+
+        # Emit schedule changed if due_datetime was updated
+        if due_datetime is not None:
+            self._emit_schedule_changed()
+
+        return result
 
     def delete_reminder(self, reminder_id: int) -> bool:
         """
@@ -246,9 +289,14 @@ class ReminderManager:
             try:
                 cursor = conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
                 conn.commit()
-                return cursor.rowcount > 0
+                deleted = cursor.rowcount > 0
             finally:
                 conn.close()
+
+        if deleted:
+            self._emit_schedule_changed()
+
+        return deleted
 
     def clear_reminder(self, reminder_id: int) -> Reminder | None:
         """
@@ -332,12 +380,26 @@ def parse_datetime(datetime_str: str) -> datetime | None:
         return None
 
 
-# Global reminder manager instance
-_reminder_manager = ReminderManager()
+# Module-level instance for tool access
+# This gets set by the AppContext during initialization
+_reminder_manager: ReminderManager | None = None
+
+
+def set_reminder_manager(manager: ReminderManager) -> None:
+    """Set the module-level reminder manager instance for tool access."""
+    global _reminder_manager
+    _reminder_manager = manager
 
 
 def get_reminder_manager() -> ReminderManager:
-    """Get the global ReminderManager instance."""
+    """
+    Get the reminder manager instance.
+
+    Returns the configured instance, or creates a default one if not set.
+    """
+    global _reminder_manager
+    if _reminder_manager is None:
+        _reminder_manager = ReminderManager()
     return _reminder_manager
 
 
@@ -361,13 +423,19 @@ def _create_reminder_impl(message: str, datetime_str: str) -> str:
     """
     due_datetime = parse_datetime(datetime_str)
     if due_datetime is None:
-        return f"Could not understand the date/time '{datetime_str}'. Try formats like 'tomorrow at 3pm', 'next Tuesday at noon', or 'January 15th at 10am'."
+        return (
+            f"Could not understand the date/time '{datetime_str}'. "
+            "Try formats like 'tomorrow at 3pm', 'next Tuesday at noon', or 'January 15th at 10am'."
+        )
 
     # Check if the time is in the past
     if due_datetime < datetime.now():
-        return f"The specified time ({due_datetime.strftime('%B %d at %I:%M %p')}) is in the past. Please specify a future date and time."
+        return (
+            f"The specified time ({due_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
+            "Please specify a future date and time."
+        )
 
-    reminder = _reminder_manager.create_reminder(message, due_datetime)
+    reminder = get_reminder_manager().create_reminder(message, due_datetime)
     formatted_time = reminder.due_datetime.strftime("%A, %B %d at %I:%M %p")
     return f"Reminder created: '{message}' for {formatted_time}."
 
@@ -408,7 +476,7 @@ def list_reminders() -> str:
     Returns:
         A formatted list of all pending reminders with their IDs, messages, and due times.
     """
-    reminders = _reminder_manager.list_reminders(status=ReminderStatus.PENDING)
+    reminders = get_reminder_manager().list_reminders(status=ReminderStatus.PENDING)
 
     if not reminders:
         return "You have no pending reminders."
@@ -439,7 +507,7 @@ def update_reminder(reminder_id: int, new_message: str | None = None, new_dateti
         - update_reminder(2, new_datetime_str="next Monday at 9am")
         - update_reminder(3, new_message="call dentist", new_datetime_str="Friday at 2pm")
     """
-    reminder = _reminder_manager.get_reminder(reminder_id)
+    reminder = get_reminder_manager().get_reminder(reminder_id)
     if reminder is None:
         return f"No reminder found with ID {reminder_id}. Use list_reminders to see your reminders."
 
@@ -447,11 +515,17 @@ def update_reminder(reminder_id: int, new_message: str | None = None, new_dateti
     if new_datetime_str:
         new_datetime = parse_datetime(new_datetime_str)
         if new_datetime is None:
-            return f"Could not understand the date/time '{new_datetime_str}'. Try formats like 'tomorrow at 3pm' or 'next Tuesday at noon'."
+            return (
+                f"Could not understand the date/time '{new_datetime_str}'. "
+                "Try formats like 'tomorrow at 3pm' or 'next Tuesday at noon'."
+            )
         if new_datetime < datetime.now():
-            return f"The specified time ({new_datetime.strftime('%B %d at %I:%M %p')}) is in the past. Please specify a future date and time."
+            return (
+                f"The specified time ({new_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
+                "Please specify a future date and time."
+            )
 
-    updated = _reminder_manager.update_reminder(
+    updated = get_reminder_manager().update_reminder(
         reminder_id,
         message=new_message,
         due_datetime=new_datetime,
@@ -479,7 +553,7 @@ def delete_reminder(reminder_id: int) -> str:
         - delete_reminder(1)
         - delete_reminder(5)
     """
-    success = _reminder_manager.delete_reminder(reminder_id)
+    success = get_reminder_manager().delete_reminder(reminder_id)
     if success:
         return f"Reminder {reminder_id} has been deleted."
     else:

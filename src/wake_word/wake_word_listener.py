@@ -17,7 +17,8 @@ import torch
 from openwakeword import Model
 from silero_vad import load_silero_vad
 
-from .audio_feedback import play_done_tone, play_listening_tone
+from audio import play_done_tone, play_listening_tone
+
 from .model_utils import ensure_openwakeword_models
 
 

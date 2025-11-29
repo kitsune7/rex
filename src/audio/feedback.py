@@ -1,5 +1,5 @@
 """
-Audio feedback tones for wake word detection.
+Audio feedback tones for Rex voice assistant.
 
 Plays short musical tones to indicate listening state:
 - Ascending C→G: Rex is now listening
@@ -23,10 +23,10 @@ SAMPLE_RATE = 44100
 NOTE_DURATION = 0.1  # seconds per note
 GAP_DURATION = 0.05  # seconds between notes
 
-# Thinking tone parameters (faster tempo)
-THINKING_NOTE_DURATION = 0.4  # seconds per note
-THINKING_GAP_DURATION = 0.05  # seconds between notes
-THINKING_VOLUME = 0.2  # softer than regular tones
+# Thinking tone parameters (slower tempo, softer)
+THINKING_NOTE_DURATION = 0.4
+THINKING_GAP_DURATION = 0.05
+THINKING_VOLUME = 0.2
 
 
 def _generate_tone(
@@ -40,8 +40,6 @@ def _generate_tone(
     tone = np.sin(2 * np.pi * frequency * t)
 
     # Apply raised cosine envelope to avoid clicks (20ms attack/release)
-    # Raised cosine (Hanning) creates smooth S-curve with no discontinuities
-    # in the derivative, preventing pops on speakers
     envelope_samples = int(0.02 * sample_rate)
     envelope = np.ones_like(tone)
     # Fade in: 0.5 * (1 - cos(pi * t)) goes from 0 to 1 smoothly
@@ -85,7 +83,8 @@ def play_done_tone():
 
 
 class ThinkingTone:
-    """Looping D→A tone that plays while waiting for LLM inference.
+    """
+    Looping D→A tone that plays while waiting for LLM inference.
 
     Can be used as a context manager:
         with ThinkingTone():
@@ -106,7 +105,7 @@ class ThinkingTone:
         return False  # Don't suppress exceptions
 
     def _generate_thinking_sequence(self) -> np.ndarray:
-        """Generate a D→A tone sequence with faster timing."""
+        """Generate a D→A tone sequence with slower timing."""
         tone1 = _generate_tone(D4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
         gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
         tone2 = _generate_tone(A4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)

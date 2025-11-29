@@ -1,7 +1,5 @@
 """Tests for timer tools: parse_duration, _format_duration, and TimerManager."""
 
-import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +8,7 @@ from agent.tools.timer import (
     TimerManager,
     TimerState,
     parse_duration,
+    set_timer_manager,
 )
 
 
@@ -110,23 +109,21 @@ class TestTimerManager:
 
     @pytest.fixture
     def fresh_timer_manager(self):
-        """Create a fresh TimerManager instance for testing.
-
-        We need to bypass the singleton pattern for isolated tests.
-        """
-        # Reset the singleton
-        TimerManager._instance = None
-
+        """Create a fresh TimerManager instance for testing."""
         # Mock sound file loading to avoid file dependencies
         with patch("agent.tools.timer.sf.read") as mock_read:
             mock_read.return_value = (MagicMock(), 44100)
             manager = TimerManager()
             # Disable sound playback in tests
             manager._sound_data = None
+
+            # Set as the module-level manager for tool access
+            set_timer_manager(manager)
+
             yield manager
 
-        # Clean up
-        TimerManager._instance = None
+            # Clean up timers
+            manager.cleanup()
 
     def test_set_timer_returns_confirmation(self, fresh_timer_manager):
         result = fresh_timer_manager.set_timer("test", 60.0)

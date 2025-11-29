@@ -8,8 +8,6 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-_settings = None
-
 
 @dataclass
 class ReminderSettings:
@@ -19,25 +17,33 @@ class ReminderSettings:
 
 
 @dataclass
+class WakeWordSettings:
+    """Settings related to wake word."""
+
+    path_label: str = "hey_rex"  # String used for folder and file name in models/wake_word_models
+    display_name: str = "Hey Rex"  # What's displayed to the user when talking about the wake word
+
+
+@dataclass
 class Settings:
     """Application settings loaded from settings.toml."""
 
     reminders: ReminderSettings
+    wake_word: WakeWordSettings
+    listening_timeout: float = 6.0  # Seconds to wait for a follow-up response
 
 
-def load_settings() -> Settings:
+def load_settings(settings_path: str | Path = "settings.toml") -> Settings:
     """
     Load settings from settings.toml.
+
+    Args:
+        settings_path: Path to the settings file
 
     Returns:
         Settings object with all configuration values.
     """
-    global _settings
-
-    if _settings is not None:
-        return _settings
-
-    settings_path = Path("settings.toml")
+    settings_path = Path(settings_path)
 
     if settings_path.exists():
         with open(settings_path, "rb") as f:
@@ -51,10 +57,44 @@ def load_settings() -> Settings:
         retry_minutes=reminder_data.get("retry_minutes", 10),
     )
 
-    _settings = Settings(reminders=reminder_settings)
-    return _settings
+    wake_word_data = data.get("wake_word", {})
+    wake_word_settings = WakeWordSettings(
+        path_label=wake_word_data.get("path_label", "hey_rex"),
+        display_name=wake_word_data.get("display_name", "Hey Rex"),
+    )
+
+    listening_timeout_data = data.get("listening_timeout", 6.0)
+
+    return Settings(
+        reminders=reminder_settings,
+        wake_word=wake_word_settings,
+        listening_timeout=listening_timeout_data,
+    )
+
+
+# Module-level cached settings (for backwards compatibility)
+# New code should pass Settings via AppContext
+_cached_settings: Settings | None = None
 
 
 def get_settings() -> Settings:
-    """Get the current settings, loading if necessary."""
-    return load_settings()
+    """
+    Get the current settings, loading if necessary.
+
+    For new code, prefer passing Settings via AppContext.
+    This function exists for backwards compatibility.
+    """
+    global _cached_settings
+    if _cached_settings is None:
+        _cached_settings = load_settings()
+    return _cached_settings
+
+
+def set_settings(settings: Settings) -> None:
+    """
+    Set the module-level cached settings.
+
+    Used by AppContext initialization to ensure consistent settings.
+    """
+    global _cached_settings
+    _cached_settings = settings

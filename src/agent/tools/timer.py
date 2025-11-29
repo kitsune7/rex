@@ -10,11 +10,14 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
 import sounddevice as sd
 import soundfile as sf
 from langchain_core.tools import tool
+
+if TYPE_CHECKING:
+    from core.events import EventBus
 
 
 class TimerState(Enum):
@@ -32,24 +35,26 @@ class Timer:
 
 
 class TimerManager:
-    """Manages multiple named timers with alarm sound playback."""
+    """
+    Manages multiple named timers with alarm sound playback.
 
-    _instance: "TimerManager | None" = None
-    _lock = threading.Lock()
+    This is no longer a singleton - instances should be created via
+    the AppContext or create_timer_manager() factory.
+    """
 
-    def __new__(cls) -> "TimerManager":
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+    def __init__(
+        self,
+        event_bus: "EventBus | None" = None,
+        sound_path: str | Path = "sounds/fun-timer.mp3",
+    ):
+        """
+        Initialize the timer manager.
 
-    def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-
+        Args:
+            event_bus: Optional event bus for emitting timer events
+            sound_path: Path to the alarm sound file
+        """
+        self._event_bus = event_bus
         self._timers: dict[str, Timer] = {}
         self._timers_lock = threading.Lock()
         self._sound_thread: threading.Thread | None = None
@@ -58,12 +63,17 @@ class TimerManager:
         self._muted = False
 
         # Load sound file
-        sound_path = Path("sounds/fun-timer.mp3")
+        sound_path = Path(sound_path)
         if sound_path.exists():
             self._sound_data, self._sample_rate = sf.read(sound_path)
         else:
             self._sound_data = None
             self._sample_rate = None
+
+    def _emit_event(self, event) -> None:
+        """Emit an event if event bus is configured."""
+        if self._event_bus is not None:
+            self._event_bus.emit(event)
 
     def _play_sound_loop(self):
         """Play the alarm sound on loop until stopped."""
@@ -103,6 +113,11 @@ class TimerManager:
                 return
             timer.state = TimerState.RINGING
             self._current_ringing = name
+
+        # Emit event
+        from core.events import TimerFired
+
+        self._emit_event(TimerFired(timer_name=name))
 
         # Start sound playback
         self._stop_sound.clear()
@@ -187,8 +202,15 @@ class TimerManager:
 
             if timer.state == TimerState.RINGING:
                 self._stop_alarm()
+                timer_name = name
                 del self._timers[name]
                 self._current_ringing = None
+
+                # Emit event
+                from core.events import TimerStopped
+
+                self._emit_event(TimerStopped(timer_name=timer_name))
+
                 return f"Stopped alarm for timer '{name}'."
             else:  # PENDING
                 if timer.thread:
@@ -208,8 +230,15 @@ class TimerManager:
                 timer = self._timers[self._current_ringing]
                 if timer.state == TimerState.RINGING:
                     self._stop_alarm()
+                    timer_name = self._current_ringing
                     del self._timers[self._current_ringing]
                     self._current_ringing = None
+
+                    # Emit event
+                    from core.events import TimerStopped
+
+                    self._emit_event(TimerStopped(timer_name=timer_name))
+
                     return True
         return False
 
@@ -239,6 +268,15 @@ class TimerManager:
                         self._stop_sound.clear()
                         self._sound_thread = threading.Thread(target=self._play_sound_loop, daemon=True)
                         self._sound_thread.start()
+
+    def cleanup(self):
+        """Clean up all timers and stop sounds."""
+        with self._timers_lock:
+            for timer in self._timers.values():
+                if timer.thread:
+                    timer.thread.cancel()
+            self._timers.clear()
+        self._stop_alarm()
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
@@ -311,8 +349,27 @@ def parse_duration(duration_str: str) -> float | None:
     return total_seconds if found_any and total_seconds > 0 else None
 
 
-# Global timer manager instance
-_timer_manager = TimerManager()
+# Module-level instance for tool access
+# This gets set by the AppContext during initialization
+_timer_manager: TimerManager | None = None
+
+
+def set_timer_manager(manager: TimerManager) -> None:
+    """Set the module-level timer manager instance for tool access."""
+    global _timer_manager
+    _timer_manager = manager
+
+
+def get_timer_manager() -> TimerManager:
+    """
+    Get the timer manager instance.
+
+    Returns the configured instance, or creates a default one if not set.
+    """
+    global _timer_manager
+    if _timer_manager is None:
+        _timer_manager = TimerManager()
+    return _timer_manager
 
 
 @tool
@@ -334,9 +391,12 @@ def set_timer(duration: str, name: str = "timer") -> str:
     """
     seconds = parse_duration(duration)
     if seconds is None:
-        return f"Could not understand duration '{duration}'. Try formats like '5 minutes', '30 seconds', or '1 hour 30 minutes'."
+        return (
+            f"Could not understand duration '{duration}'. "
+            "Try formats like '5 minutes', '30 seconds', or '1 hour 30 minutes'."
+        )
 
-    return _timer_manager.set_timer(name, seconds)
+    return get_timer_manager().set_timer(name, seconds)
 
 
 @tool
@@ -347,7 +407,7 @@ def check_timers() -> str:
     Returns:
         Status of all timers including remaining time or if they're currently ringing.
     """
-    return _timer_manager.check_timers()
+    return get_timer_manager().check_timers()
 
 
 @tool
@@ -365,9 +425,4 @@ def stop_timer(name: str | None = None) -> str:
         - stop_timer() - stops the currently ringing alarm
         - stop_timer("pizza timer") - stops or cancels the pizza timer
     """
-    return _timer_manager.stop_timer(name)
-
-
-def get_timer_manager() -> TimerManager:
-    """Get the global TimerManager instance."""
-    return _timer_manager
+    return get_timer_manager().stop_timer(name)

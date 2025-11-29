@@ -2,8 +2,6 @@
 
 import math
 
-import pytest
-
 from agent.tools.math import calculate
 
 

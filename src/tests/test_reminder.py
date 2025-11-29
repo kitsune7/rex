@@ -1,21 +1,20 @@
 """Tests for reminder tools: ReminderManager, CRUD operations, and datetime parsing."""
 
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 
 from agent.tools.reminder import (
+    CONFIRMABLE_TOOLS,
     ReminderManager,
     ReminderStatus,
-    Reminder,
-    parse_datetime,
     create_reminder,
-    list_reminders,
-    update_reminder,
     delete_reminder,
-    CONFIRMABLE_TOOLS,
+    list_reminders,
+    parse_datetime,
+    set_reminder_manager,
     tool_requires_confirmation,
+    update_reminder,
 )
 
 
@@ -71,21 +70,11 @@ class TestReminderManager:
     @pytest.fixture
     def fresh_reminder_manager(self, tmp_path):
         """Create a fresh ReminderManager with a temp database."""
-        # Reset singleton
-        ReminderManager._instance = None
-
-        # Create manager - it will try to create the default db path
-        manager = ReminderManager()
-
-        # Override the db path to use temp directory
+        # Create manager with temp db path
         db_path = tmp_path / "test_reminders.db"
-        manager._db_path = db_path
-        manager._init_db()
+        manager = ReminderManager(db_path=db_path)
 
         yield manager
-
-        # Reset singleton after test
-        ReminderManager._instance = None
 
     def test_create_reminder(self, fresh_reminder_manager):
         due = datetime.now() + timedelta(hours=1)
@@ -200,6 +189,123 @@ class TestReminderManager:
         assert snoozed.due_datetime == new_due
         assert snoozed.status == ReminderStatus.PENDING
 
+    def test_get_next_pending_time_none(self, fresh_reminder_manager):
+        """Returns None when no pending reminders exist."""
+        assert fresh_reminder_manager.get_next_pending_time() is None
+
+    def test_get_next_pending_time_single(self, fresh_reminder_manager):
+        """Returns the due time of the only pending reminder."""
+        due = datetime.now() + timedelta(hours=1)
+        fresh_reminder_manager.create_reminder("Test", due)
+
+        next_time = fresh_reminder_manager.get_next_pending_time()
+        assert next_time is not None
+        assert next_time == due
+
+    def test_get_next_pending_time_multiple(self, fresh_reminder_manager):
+        """Returns the earliest due time among multiple reminders."""
+        due1 = datetime.now() + timedelta(hours=2)
+        due2 = datetime.now() + timedelta(hours=1)  # Earlier
+        due3 = datetime.now() + timedelta(hours=3)
+
+        fresh_reminder_manager.create_reminder("Later", due1)
+        fresh_reminder_manager.create_reminder("Earliest", due2)
+        fresh_reminder_manager.create_reminder("Latest", due3)
+
+        next_time = fresh_reminder_manager.get_next_pending_time()
+        assert next_time is not None
+        assert next_time == due2
+
+    def test_get_next_pending_time_ignores_cleared(self, fresh_reminder_manager):
+        """Cleared reminders are not considered."""
+        due1 = datetime.now() + timedelta(hours=1)
+        due2 = datetime.now() + timedelta(hours=2)
+
+        r1 = fresh_reminder_manager.create_reminder("Will be cleared", due1)
+        fresh_reminder_manager.create_reminder("Still pending", due2)
+        fresh_reminder_manager.clear_reminder(r1.id)
+
+        next_time = fresh_reminder_manager.get_next_pending_time()
+        assert next_time is not None
+        assert next_time == due2
+
+
+class TestReminderManagerEvents:
+    """Tests for ReminderManager event emission."""
+
+    @pytest.fixture
+    def manager_with_events(self, tmp_path):
+        """Create a ReminderManager with an event bus."""
+        from core.events import EventBus, ReminderScheduleChanged
+
+        event_bus = EventBus()
+        events_received = []
+
+        def handler(event):
+            events_received.append(event)
+
+        event_bus.subscribe(ReminderScheduleChanged, handler)
+
+        db_path = tmp_path / "test_reminders.db"
+        manager = ReminderManager(db_path=db_path, event_bus=event_bus)
+
+        return manager, events_received
+
+    def test_create_reminder_emits_event(self, manager_with_events):
+        manager, events = manager_with_events
+        due = datetime.now() + timedelta(hours=1)
+
+        manager.create_reminder("Test", due)
+
+        assert len(events) == 1
+
+    def test_update_due_datetime_emits_event(self, manager_with_events):
+        manager, events = manager_with_events
+        due = datetime.now() + timedelta(hours=1)
+        new_due = datetime.now() + timedelta(hours=2)
+
+        reminder = manager.create_reminder("Test", due)
+        events.clear()
+
+        manager.update_reminder(reminder.id, due_datetime=new_due)
+
+        assert len(events) == 1
+
+    def test_update_message_only_no_event(self, manager_with_events):
+        """Updating only the message doesn't emit schedule change event."""
+        manager, events = manager_with_events
+        due = datetime.now() + timedelta(hours=1)
+
+        reminder = manager.create_reminder("Test", due)
+        events.clear()
+
+        manager.update_reminder(reminder.id, message="Updated")
+
+        assert len(events) == 0
+
+    def test_delete_reminder_emits_event(self, manager_with_events):
+        manager, events = manager_with_events
+        due = datetime.now() + timedelta(hours=1)
+
+        reminder = manager.create_reminder("Test", due)
+        events.clear()
+
+        manager.delete_reminder(reminder.id)
+
+        assert len(events) == 1
+
+    def test_snooze_reminder_emits_event(self, manager_with_events):
+        manager, events = manager_with_events
+        due = datetime.now() + timedelta(hours=1)
+        new_due = datetime.now() + timedelta(hours=2)
+
+        reminder = manager.create_reminder("Test", due)
+        events.clear()
+
+        manager.snooze_reminder(reminder.id, new_due)
+
+        assert len(events) == 1
+
 
 class TestReminderTools:
     """Tests for the tool functions."""
@@ -207,19 +313,14 @@ class TestReminderTools:
     @pytest.fixture
     def fresh_reminder_manager(self, tmp_path):
         """Create a fresh ReminderManager with a temp database."""
-        ReminderManager._instance = None
-
-        # Create manager and override db path
-        manager = ReminderManager()
+        # Create manager with temp db path
         db_path = tmp_path / "test_reminders.db"
-        manager._db_path = db_path
-        manager._init_db()
+        manager = ReminderManager(db_path=db_path)
 
-        # Patch the global instance used by tools
-        with patch("agent.tools.reminder._reminder_manager", manager):
-            yield manager
+        # Set as the module-level manager for tool access
+        set_reminder_manager(manager)
 
-        ReminderManager._instance = None
+        yield manager
 
     def test_create_reminder_tool(self, fresh_reminder_manager):
         # Use a future date

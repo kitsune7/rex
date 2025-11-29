@@ -1,8 +1,9 @@
 """
 Reminder scheduler for Rex voice assistant.
 
-Runs a background thread that checks for due reminders and triggers
-proactive conversations with the user.
+Runs a background thread that wakes at the exact time reminders are due,
+rather than polling. Uses event-based notification to recalculate wake
+times when reminders are created, updated, or deleted.
 """
 
 import threading
@@ -10,63 +11,67 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import sounddevice as sd
 import soundfile as sf
 
-from agent.tools.reminder import (
-    ReminderManager,
-    ReminderStatus,
-    Reminder,
-    get_reminder_manager,
-)
-from .settings import get_settings
+if TYPE_CHECKING:
+    from agent.tools.reminder import Reminder, ReminderManager
+    from core.events import EventBus
+    from rex.settings import ReminderSettings
 
 
 @dataclass
 class ReminderDelivery:
     """Information about a reminder being delivered."""
 
-    reminder: Reminder
-    attempt: int = 1
+    reminder: "Reminder"
 
 
 class ReminderScheduler:
     """
-    Background scheduler that checks for due reminders and triggers delivery.
+    Background scheduler that wakes precisely when reminders are due.
 
-    The scheduler runs a background thread that periodically checks for
-    reminders that are due. When a reminder is due, it signals the main
-    loop to handle delivery.
+    Instead of polling at fixed intervals, the scheduler calculates how
+    long to sleep until the next reminder is due. It subscribes to
+    ReminderScheduleChanged events to recalculate when the schedule changes.
     """
 
     def __init__(
         self,
         on_reminder_due: Callable[[ReminderDelivery], None] | None = None,
-        check_interval: float = 30.0,
+        reminder_manager: "ReminderManager | None" = None,
+        reminder_settings: "ReminderSettings | None" = None,
+        event_bus: "EventBus | None" = None,
     ):
         """
         Initialize the reminder scheduler.
 
         Args:
             on_reminder_due: Callback when a reminder is due
-            check_interval: How often to check for due reminders (seconds)
+            reminder_manager: ReminderManager instance (uses default if not provided)
+            reminder_settings: ReminderSettings instance (uses default if not provided)
+            event_bus: EventBus for schedule change notifications
         """
-        self._reminder_manager = get_reminder_manager()
+        # Import here to avoid circular imports and allow optional DI
+        if reminder_manager is None:
+            from agent.tools.reminder import get_reminder_manager
+
+            reminder_manager = get_reminder_manager()
+
+        self._reminder_manager = reminder_manager
+        self._reminder_settings = reminder_settings
+        self._event_bus = event_bus
         self._on_reminder_due = on_reminder_due
-        self._check_interval = check_interval
 
         self._running = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._wake_event = threading.Event()
         self._pending_delivery: ReminderDelivery | None = None
         self._delivery_lock = threading.Lock()
         self._delivery_event = threading.Event()
-
-        # Track reminders that failed delivery and their retry times
-        self._retry_schedule: dict[int, datetime] = {}
-        self._retry_lock = threading.Lock()
 
         # Load ding sound
         sound_path = Path("sounds/ding.mp3")
@@ -76,6 +81,15 @@ class ReminderScheduler:
             self._sound_data = None
             self._sample_rate = None
 
+    def _get_retry_minutes(self) -> int:
+        """Get retry minutes from settings or default."""
+        if self._reminder_settings:
+            return self._reminder_settings.retry_minutes
+        # Fallback to loading settings if not provided
+        from rex.settings import get_settings
+
+        return get_settings().reminders.retry_minutes
+
     def start(self):
         """Start the background scheduler thread."""
         if self._running:
@@ -83,6 +97,14 @@ class ReminderScheduler:
 
         self._running = True
         self._stop_event.clear()
+        self._wake_event.clear()
+
+        # Subscribe to schedule change events
+        if self._event_bus:
+            from core.events import ReminderScheduleChanged
+
+            self._event_bus.subscribe(ReminderScheduleChanged, self._on_schedule_changed)
+
         self._thread = threading.Thread(target=self._scheduler_loop, daemon=True)
         self._thread.start()
 
@@ -90,24 +112,62 @@ class ReminderScheduler:
         """Stop the background scheduler thread."""
         self._running = False
         self._stop_event.set()
-        self._delivery_event.set()  # Wake up any waiting
+        self._wake_event.set()  # Wake up any waiting
+        self._delivery_event.set()
+
+        # Unsubscribe from events
+        if self._event_bus:
+            from core.events import ReminderScheduleChanged
+
+            self._event_bus.unsubscribe(ReminderScheduleChanged, self._on_schedule_changed)
+
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self._thread = None
 
-    def _scheduler_loop(self):
-        """Main scheduler loop that checks for due reminders."""
-        while self._running and not self._stop_event.is_set():
-            try:
-                self._check_due_reminders()
-            except Exception as e:
-                print(f"Error in reminder scheduler: {e}")
+    def _on_schedule_changed(self, event) -> None:
+        """Handler for ReminderScheduleChanged events - wakes the scheduler."""
+        self._wake_event.set()
 
-            # Sleep with periodic wake-up checks
-            for _ in range(int(self._check_interval)):
-                if self._stop_event.is_set():
-                    break
-                time.sleep(1.0)
+    def _calculate_next_wake_time(self) -> datetime | None:
+        """
+        Calculate when to next wake up.
+
+        Returns:
+            The time to wake up (rounded down to :00 seconds), or None if no pending reminders.
+        """
+        next_time = self._reminder_manager.get_next_pending_time()
+
+        if next_time is None:
+            return None
+
+        # Round down to the start of the minute
+        return next_time.replace(second=0, microsecond=0)
+
+    def _scheduler_loop(self):
+        """Main scheduler loop that wakes at precise reminder times."""
+        # Check immediately on startup for any already-due reminders
+        self._check_due_reminders()
+
+        while self._running and not self._stop_event.is_set():
+            next_wake = self._calculate_next_wake_time()
+
+            if next_wake is not None:
+                # Sleep until the start of the due minute
+                sleep_seconds = (next_wake - datetime.now()).total_seconds()
+                if sleep_seconds <= 0:
+                    # Already due - check immediately
+                    self._check_due_reminders()
+                    continue
+
+            # Wait until timeout or nudged by schedule change
+            self._wake_event.clear()
+
+            if self._stop_event.is_set():
+                break
+
+            # Check for due reminders (whether woken by timeout or event)
+            self._check_due_reminders()
 
     def _check_due_reminders(self):
         """Check for due reminders and trigger delivery."""
@@ -115,36 +175,17 @@ class ReminderScheduler:
         if self.has_pending_delivery():
             return
 
-        # First check retry schedule
-        with self._retry_lock:
-            now = datetime.now()
-            retry_due = [rid for rid, retry_time in self._retry_schedule.items() if retry_time <= now]
-
-        # Process retries
-        for reminder_id in retry_due:
-            reminder = self._reminder_manager.get_reminder(reminder_id)
-            if reminder and reminder.status == ReminderStatus.PENDING:
-                with self._retry_lock:
-                    attempt = 2  # Retries are at least attempt 2
-                    del self._retry_schedule[reminder_id]
-                self._trigger_delivery(reminder, attempt)
-                return  # Handle one at a time
-
         # Check for new due reminders
         due_reminders = self._reminder_manager.get_due_reminders()
 
-        # Filter out reminders that are already scheduled for retry
-        with self._retry_lock:
-            due_reminders = [r for r in due_reminders if r.id not in self._retry_schedule]
-
         if due_reminders:
             # Trigger delivery for the first due reminder
-            self._trigger_delivery(due_reminders[0], attempt=1)
+            self._trigger_delivery(due_reminders[0])
 
-    def _trigger_delivery(self, reminder: Reminder, attempt: int):
+    def _trigger_delivery(self, reminder: "Reminder"):
         """Trigger delivery of a reminder."""
         with self._delivery_lock:
-            self._pending_delivery = ReminderDelivery(reminder=reminder, attempt=attempt)
+            self._pending_delivery = ReminderDelivery(reminder=reminder)
             self._delivery_event.set()
 
         if self._on_reminder_due:
@@ -180,19 +221,20 @@ class ReminderScheduler:
     def mark_delivered(self, reminder_id: int):
         """Mark a reminder as successfully delivered (user acknowledged)."""
         self._reminder_manager.clear_reminder(reminder_id)
-        with self._retry_lock:
-            self._retry_schedule.pop(reminder_id, None)
         self.clear_pending_delivery()
 
     def schedule_retry(self, reminder_id: int):
-        """Schedule a reminder for retry after the configured interval."""
-        settings = get_settings()
-        retry_minutes = settings.reminders.retry_minutes
+        """
+        Schedule a reminder for retry after the configured interval.
+
+        This updates the reminder's due_datetime rather than tracking retries
+        separately, so the reminder persists across restarts.
+        """
+        retry_minutes = self._get_retry_minutes()
         retry_time = datetime.now() + timedelta(minutes=retry_minutes)
 
-        with self._retry_lock:
-            self._retry_schedule[reminder_id] = retry_time
-
+        # Update the reminder's due time - this triggers ReminderScheduleChanged
+        self._reminder_manager.update_reminder(reminder_id, due_datetime=retry_time)
         self.clear_pending_delivery()
 
     def snooze_reminder(self, reminder_id: int, snooze_minutes: int):
@@ -205,10 +247,6 @@ class ReminderScheduler:
         """
         new_time = datetime.now() + timedelta(minutes=snooze_minutes)
         self._reminder_manager.snooze_reminder(reminder_id, new_time)
-
-        with self._retry_lock:
-            self._retry_schedule.pop(reminder_id, None)
-
         self.clear_pending_delivery()
 
     def play_ding(self):
