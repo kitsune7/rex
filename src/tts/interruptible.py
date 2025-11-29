@@ -4,11 +4,9 @@ Interruptible TTS playback with wake word detection.
 Allows users to interrupt Rex's speech by saying "Hey Rex".
 """
 
-from piper import PiperVoice
-
 from wake_word import WakeWordMonitor
 
-from .tts import speak_text
+from .tts import KokoroVoice, speak_text
 
 
 class InterruptibleSpeaker:
@@ -18,7 +16,7 @@ class InterruptibleSpeaker:
     Uses WakeWordMonitor to detect when the user says "Hey Rex" during playback.
     """
 
-    def __init__(self, voice: PiperVoice, model_path: str, threshold: float = 0.5):
+    def __init__(self, voice: KokoroVoice, model_path: str, threshold: float = 0.5):
         """
         Initialize the interruptible speaker.
 
