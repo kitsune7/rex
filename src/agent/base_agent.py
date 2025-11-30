@@ -3,7 +3,7 @@ from datetime import date
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent as create_langchain_agent
 from pydantic import SecretStr
 
 from .tools.reminder import CONFIRMABLE_TOOLS
@@ -55,7 +55,7 @@ def create_agent(tools, checkpointer=None):
     # We'll check which specific tool is being called at runtime
     use_interrupt = has_confirmable_tools(tools) and checkpointer is not None
 
-    return create_react_agent(
+    return create_langchain_agent(
         llm,
         tools,
         prompt=get_system_prompt(),
