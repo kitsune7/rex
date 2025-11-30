@@ -1,9 +1,9 @@
 from datetime import date
 
 from dotenv import load_dotenv
+from langchain.agents import create_agent as create_langchain_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langchain.agents import create_agent as create_langchain_agent
 from pydantic import SecretStr
 
 from .tools.reminder import CONFIRMABLE_TOOLS
@@ -58,7 +58,7 @@ def create_agent(tools, checkpointer=None):
     return create_langchain_agent(
         llm,
         tools,
-        prompt=get_system_prompt(),
+        system_prompt=get_system_prompt(),
         checkpointer=checkpointer,
         interrupt_before=["tools"] if use_interrupt else None,
     )

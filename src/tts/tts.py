@@ -13,14 +13,16 @@ class KokoroVoice:
             warnings.filterwarnings("ignore", category=FutureWarning, module="torch")
             self.pipeline = KPipeline(lang_code=lang_code, repo_id="hexgrad/Kokoro-82M")
         self.sample_rate = 24000
-    
+
     def synthesize(self, text):
         """Generator that yields audio chunks for the given text and voice"""
         for _, _, audio in self.pipeline(text, voice=self.voice):
             yield audio
 
-def load_voice(lang_code='a', voice='am_fenrir'):
+
+def load_voice(lang_code="a", voice="am_fenrir"):
     return KokoroVoice(lang_code, voice)
+
 
 def speak_text(text, voice_obj, interrupt_check: Callable[[], bool] | None = None) -> bool:
     for chunk in voice_obj.synthesize(text):
