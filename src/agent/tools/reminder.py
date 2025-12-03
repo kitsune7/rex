@@ -373,8 +373,29 @@ def parse_datetime(datetime_str: str) -> datetime | None:
         # Use dateutil parser with fuzzy matching for natural language
         parsed = dateutil_parser.parse(modified, fuzzy=True)
 
-        # If no time was specified and it parsed to midnight, that's probably not intentional
-        # But we'll accept it since the user might mean "start of day"
+        # Check if AM/PM was explicitly specified
+        has_explicit_ampm = any(marker in original for marker in ["am", "pm", "a.m", "p.m"])
+
+        if not has_explicit_ampm:
+            # For ambiguous times, find the soonest future AM or PM interpretation
+            hour = parsed.hour
+            am_hour = hour % 12
+            pm_hour = am_hour + 12
+
+            am_version = parsed.replace(hour=am_hour)
+            pm_version = parsed.replace(hour=pm_hour)
+
+            candidates = [am_version, pm_version]
+
+            # Only consider next day if parsed date is today (likely no explicit date given)
+            if parsed.date() == now.date():
+                candidates.extend([am_version + timedelta(days=1), pm_version + timedelta(days=1)])
+
+            # Filter to future times and pick the soonest
+            future_candidates = [c for c in candidates if c > now]
+            if future_candidates:
+                parsed = min(future_candidates)
+
         return parsed
     except (ValueError, TypeError):
         return None
@@ -406,7 +427,7 @@ def create_reminder_tools(manager: ReminderManager) -> tuple:
 
         Args:
             message: What to remind about
-            datetime_str: When (e.g. "3pm", "tomorrow at noon"). If only time given, assume today unless already passed.
+            datetime_str: When to remind. For ambiguous times, use the soonest am/pm (e.g., at 11:30pm "3:05" → 3:05am; at 8:15am "8:45" → 8:45am).
         """
         due_datetime = parse_datetime(datetime_str)
         if due_datetime is None:
@@ -418,12 +439,12 @@ def create_reminder_tools(manager: ReminderManager) -> tuple:
         # Check if the time is in the past
         if due_datetime < datetime.now():
             return (
-                f"The specified time ({due_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
+                f"The specified time ({due_datetime.strftime('%B %-d at %-I:%M %p')}) is in the past. "
                 "Please specify a future date and time."
             )
 
         reminder = manager.create_reminder(message, due_datetime)
-        formatted_time = reminder.due_datetime.strftime("%A, %B %d at %I:%M %p")
+        formatted_time = reminder.due_datetime.strftime("%A, %B %-d at %-I:%M %p")
         return f"Reminder created: '{message}' for {formatted_time}."
 
     @tool
@@ -441,7 +462,7 @@ def create_reminder_tools(manager: ReminderManager) -> tuple:
 
         lines = ["Your pending reminders:"]
         for r in reminders:
-            formatted_time = r.due_datetime.strftime("%A, %B %d at %I:%M %p")
+            formatted_time = r.due_datetime.strftime("%A, %B %-d at %-I:%M %p")
             lines.append(f"- ID {r.id}: '{r.message}' - {formatted_time}")
 
         return "\n".join(lines)
@@ -469,7 +490,7 @@ def create_reminder_tools(manager: ReminderManager) -> tuple:
                 )
             if new_datetime < datetime.now():
                 return (
-                    f"The specified time ({new_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
+                    f"The specified time ({new_datetime.strftime('%B %-d at %-I:%M %p')}) is in the past. "
                     "Please specify a future date and time."
                 )
 
