@@ -8,13 +8,9 @@ from agent.tools.reminder import (
     CONFIRMABLE_TOOLS,
     ReminderManager,
     ReminderStatus,
-    create_reminder,
-    delete_reminder,
-    list_reminders,
+    create_reminder_tools,
     parse_datetime,
-    set_reminder_manager,
     tool_requires_confirmation,
-    update_reminder,
 )
 
 
@@ -311,18 +307,15 @@ class TestReminderTools:
     """Tests for the tool functions."""
 
     @pytest.fixture
-    def fresh_reminder_manager(self, tmp_path):
-        """Create a fresh ReminderManager with a temp database."""
-        # Create manager with temp db path
+    def reminder_tools(self, tmp_path):
+        """Create reminder tools with a fresh manager."""
         db_path = tmp_path / "test_reminders.db"
         manager = ReminderManager(db_path=db_path)
+        create_reminder, list_reminders, update_reminder, delete_reminder = create_reminder_tools(manager)
+        return manager, create_reminder, list_reminders, update_reminder, delete_reminder
 
-        # Set as the module-level manager for tool access
-        set_reminder_manager(manager)
-
-        yield manager
-
-    def test_create_reminder_tool(self, fresh_reminder_manager):
+    def test_create_reminder_tool(self, reminder_tools):
+        _, create_reminder, _, _, _ = reminder_tools
         # Use a future date
         tomorrow = datetime.now() + timedelta(days=1)
         datetime_str = tomorrow.strftime("%Y-%m-%d at 10am")
@@ -332,51 +325,59 @@ class TestReminderTools:
         assert "Reminder created" in result
         assert "Test reminder" in result
 
-    def test_create_reminder_tool_invalid_datetime(self, fresh_reminder_manager):
+    def test_create_reminder_tool_invalid_datetime(self, reminder_tools):
+        _, create_reminder, _, _, _ = reminder_tools
         result = create_reminder.invoke({"message": "Test", "datetime_str": ""})
         assert "Could not understand" in result
 
-    def test_create_reminder_tool_past_time(self, fresh_reminder_manager):
+    def test_create_reminder_tool_past_time(self, reminder_tools):
+        _, create_reminder, _, _, _ = reminder_tools
         past = datetime.now() - timedelta(days=1)
         datetime_str = past.strftime("%Y-%m-%d at 10am")
 
         result = create_reminder.invoke({"message": "Test", "datetime_str": datetime_str})
         assert "in the past" in result
 
-    def test_list_reminders_tool_empty(self, fresh_reminder_manager):
+    def test_list_reminders_tool_empty(self, reminder_tools):
+        _, _, list_reminders, _, _ = reminder_tools
         result = list_reminders.invoke({})
         assert "no pending reminders" in result.lower()
 
-    def test_list_reminders_tool(self, fresh_reminder_manager):
+    def test_list_reminders_tool(self, reminder_tools):
+        manager, _, list_reminders, _, _ = reminder_tools
         due = datetime.now() + timedelta(hours=1)
-        fresh_reminder_manager.create_reminder("Test reminder", due)
+        manager.create_reminder("Test reminder", due)
 
         result = list_reminders.invoke({})
         assert "Test reminder" in result
         assert "ID" in result
 
-    def test_update_reminder_tool(self, fresh_reminder_manager):
+    def test_update_reminder_tool(self, reminder_tools):
+        manager, _, _, update_reminder, _ = reminder_tools
         due = datetime.now() + timedelta(hours=1)
-        reminder = fresh_reminder_manager.create_reminder("Original", due)
+        reminder = manager.create_reminder("Original", due)
 
         result = update_reminder.invoke({"reminder_id": reminder.id, "new_message": "Updated"})
 
         assert "updated" in result.lower()
         assert "Updated" in result
 
-    def test_update_reminder_tool_not_found(self, fresh_reminder_manager):
+    def test_update_reminder_tool_not_found(self, reminder_tools):
+        _, _, _, update_reminder, _ = reminder_tools
         result = update_reminder.invoke({"reminder_id": 9999, "new_message": "Test"})
         assert "not found" in result.lower() or "No reminder" in result
 
-    def test_delete_reminder_tool(self, fresh_reminder_manager):
+    def test_delete_reminder_tool(self, reminder_tools):
+        manager, _, _, _, delete_reminder = reminder_tools
         due = datetime.now() + timedelta(hours=1)
-        reminder = fresh_reminder_manager.create_reminder("Test", due)
+        reminder = manager.create_reminder("Test", due)
 
         result = delete_reminder.invoke({"reminder_id": reminder.id})
 
         assert "deleted" in result.lower()
 
-    def test_delete_reminder_tool_not_found(self, fresh_reminder_manager):
+    def test_delete_reminder_tool_not_found(self, reminder_tools):
+        _, _, _, _, delete_reminder = reminder_tools
         result = delete_reminder.invoke({"reminder_id": 9999})
         assert "not found" in result.lower() or "No reminder" in result
 

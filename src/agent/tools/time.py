@@ -5,6 +5,6 @@ from langchain_core.tools import tool
 
 @tool
 def get_current_time() -> str:
-    """Get the current time in 12-hour format with AM/PM."""
+    """Get the current time. Use this when the user asks what time it is."""
     now = datetime.now()
     return now.strftime("%-I:%M %p")

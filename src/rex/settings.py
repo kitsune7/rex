@@ -72,29 +72,3 @@ def load_settings(settings_path: str | Path = "settings.toml") -> Settings:
     )
 
 
-# Module-level cached settings (for backwards compatibility)
-# New code should pass Settings via AppContext
-_cached_settings: Settings | None = None
-
-
-def get_settings() -> Settings:
-    """
-    Get the current settings, loading if necessary.
-
-    For new code, prefer passing Settings via AppContext.
-    This function exists for backwards compatibility.
-    """
-    global _cached_settings
-    if _cached_settings is None:
-        _cached_settings = load_settings()
-    return _cached_settings
-
-
-def set_settings(settings: Settings) -> None:
-    """
-    Set the module-level cached settings.
-
-    Used by AppContext initialization to ensure consistent settings.
-    """
-    global _cached_settings
-    _cached_settings = settings

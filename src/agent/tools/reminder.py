@@ -380,72 +380,8 @@ def parse_datetime(datetime_str: str) -> datetime | None:
         return None
 
 
-# Module-level instance for tool access
-# This gets set by the AppContext during initialization
-_reminder_manager: ReminderManager | None = None
-
-
-def set_reminder_manager(manager: ReminderManager) -> None:
-    """Set the module-level reminder manager instance for tool access."""
-    global _reminder_manager
-    _reminder_manager = manager
-
-
-def get_reminder_manager() -> ReminderManager:
-    """
-    Get the reminder manager instance.
-
-    Returns the configured instance, or creates a default one if not set.
-    """
-    global _reminder_manager
-    if _reminder_manager is None:
-        _reminder_manager = ReminderManager()
-    return _reminder_manager
-
-
 # Set of tool names that require confirmation
 CONFIRMABLE_TOOLS = {"create_reminder"}
-
-
-def _create_reminder_impl(message: str, datetime_str: str) -> str:
-    """
-    Implementation of create_reminder.
-
-    Args:
-        message: What to remind the user about
-        datetime_str: When to remind them
-
-    Returns:
-        Confirmation message with reminder details, or error message.
-    """
-    due_datetime = parse_datetime(datetime_str)
-    if due_datetime is None:
-        return (
-            f"Could not understand the date/time '{datetime_str}'. "
-            "Try formats like 'tomorrow at 3pm', 'next Tuesday at noon', or 'January 15th at 10am'."
-        )
-
-    # Check if the time is in the past
-    if due_datetime < datetime.now():
-        return (
-            f"The specified time ({due_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
-            "Please specify a future date and time."
-        )
-
-    reminder = get_reminder_manager().create_reminder(message, due_datetime)
-    formatted_time = reminder.due_datetime.strftime("%A, %B %d at %I:%M %p")
-    return f"Reminder created: '{message}' for {formatted_time}."
-
-
-@tool
-def create_reminder(message: str, datetime_str: str) -> str:
-    """Create a reminder. Requires user confirmation.
-
-    Args:
-        message: What to remind about
-        datetime_str: When (e.g. "3pm", "tomorrow at noon"). If only time given, assume today unless already passed.
-    """
-    return _create_reminder_impl(message, datetime_str)
 
 
 def tool_requires_confirmation(tool_name: str) -> bool:
@@ -453,72 +389,109 @@ def tool_requires_confirmation(tool_name: str) -> bool:
     return tool_name in CONFIRMABLE_TOOLS
 
 
-@tool
-def list_reminders() -> str:
+def create_reminder_tools(manager: ReminderManager) -> tuple:
     """
-    List all pending reminders.
-
-    Returns:
-        A formatted list of all pending reminders with their IDs, messages, and due times.
-    """
-    reminders = get_reminder_manager().list_reminders(status=ReminderStatus.PENDING)
-
-    if not reminders:
-        return "You have no pending reminders."
-
-    lines = ["Your pending reminders:"]
-    for r in reminders:
-        formatted_time = r.due_datetime.strftime("%A, %B %d at %I:%M %p")
-        lines.append(f"- ID {r.id}: '{r.message}' - {formatted_time}")
-
-    return "\n".join(lines)
-
-
-@tool
-def update_reminder(reminder_id: int, new_message: str | None = None, new_datetime_str: str | None = None) -> str:
-    """Update a reminder's message and/or time.
+    Create reminder tools with the given manager injected.
 
     Args:
-        reminder_id: ID from list_reminders
-        new_message: New message (optional)
-        new_datetime_str: New time (optional)
-    """
-    reminder = get_reminder_manager().get_reminder(reminder_id)
-    if reminder is None:
-        return f"No reminder found with ID {reminder_id}. Use list_reminders to see your reminders."
+        manager: ReminderManager instance to use for all operations
 
-    new_datetime = None
-    if new_datetime_str:
-        new_datetime = parse_datetime(new_datetime_str)
-        if new_datetime is None:
+    Returns:
+        Tuple of (create_reminder, list_reminders, update_reminder, delete_reminder) tools
+    """
+
+    @tool
+    def create_reminder(message: str, datetime_str: str) -> str:
+        """Create a reminder. Requires user confirmation.
+
+        Args:
+            message: What to remind about
+            datetime_str: When (e.g. "3pm", "tomorrow at noon"). If only time given, assume today unless already passed.
+        """
+        due_datetime = parse_datetime(datetime_str)
+        if due_datetime is None:
             return (
-                f"Could not understand the date/time '{new_datetime_str}'. "
-                "Try formats like 'tomorrow at 3pm' or 'next Tuesday at noon'."
+                f"Could not understand the date/time '{datetime_str}'. "
+                "Try formats like 'tomorrow at 3pm', 'next Tuesday at noon', or 'January 15th at 10am'."
             )
-        if new_datetime < datetime.now():
+
+        # Check if the time is in the past
+        if due_datetime < datetime.now():
             return (
-                f"The specified time ({new_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
+                f"The specified time ({due_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
                 "Please specify a future date and time."
             )
 
-    updated = get_reminder_manager().update_reminder(
-        reminder_id,
-        message=new_message,
-        due_datetime=new_datetime,
-    )
+        reminder = manager.create_reminder(message, due_datetime)
+        formatted_time = reminder.due_datetime.strftime("%A, %B %d at %I:%M %p")
+        return f"Reminder created: '{message}' for {formatted_time}."
 
-    if updated is None:
-        return f"No reminder found with ID {reminder_id}."
+    @tool
+    def list_reminders() -> str:
+        """
+        List all pending reminders.
 
-    formatted_time = updated.due_datetime.strftime("%A, %B %d at %I:%M %p")
-    return f"Reminder updated: '{updated.message}' for {formatted_time}."
+        Returns:
+            A formatted list of all pending reminders with their IDs, messages, and due times.
+        """
+        reminders = manager.list_reminders(status=ReminderStatus.PENDING)
 
+        if not reminders:
+            return "You have no pending reminders."
 
-@tool
-def delete_reminder(reminder_id: int) -> str:
-    """Delete a reminder by ID."""
-    success = get_reminder_manager().delete_reminder(reminder_id)
-    if success:
-        return f"Reminder {reminder_id} has been deleted."
-    else:
-        return f"No reminder found with ID {reminder_id}. Use list_reminders to see your reminders."
+        lines = ["Your pending reminders:"]
+        for r in reminders:
+            formatted_time = r.due_datetime.strftime("%A, %B %d at %I:%M %p")
+            lines.append(f"- ID {r.id}: '{r.message}' - {formatted_time}")
+
+        return "\n".join(lines)
+
+    @tool
+    def update_reminder(reminder_id: int, new_message: str | None = None, new_datetime_str: str | None = None) -> str:
+        """Update a reminder's message and/or time.
+
+        Args:
+            reminder_id: ID from list_reminders
+            new_message: New message (optional)
+            new_datetime_str: New time (optional)
+        """
+        reminder = manager.get_reminder(reminder_id)
+        if reminder is None:
+            return f"No reminder found with ID {reminder_id}. Use list_reminders to see your reminders."
+
+        new_datetime = None
+        if new_datetime_str:
+            new_datetime = parse_datetime(new_datetime_str)
+            if new_datetime is None:
+                return (
+                    f"Could not understand the date/time '{new_datetime_str}'. "
+                    "Try formats like 'tomorrow at 3pm' or 'next Tuesday at noon'."
+                )
+            if new_datetime < datetime.now():
+                return (
+                    f"The specified time ({new_datetime.strftime('%B %d at %I:%M %p')}) is in the past. "
+                    "Please specify a future date and time."
+                )
+
+        updated = manager.update_reminder(
+            reminder_id,
+            message=new_message,
+            due_datetime=new_datetime,
+        )
+
+        if updated is None:
+            return f"No reminder found with ID {reminder_id}."
+
+        formatted_time = updated.due_datetime.strftime("%A, %B %d at %I:%M %p")
+        return f"Reminder updated: '{updated.message}' for {formatted_time}."
+
+    @tool
+    def delete_reminder(reminder_id: int) -> str:
+        """Delete a reminder by ID."""
+        success = manager.delete_reminder(reminder_id)
+        if success:
+            return f"Reminder {reminder_id} has been deleted."
+        else:
+            return f"No reminder found with ID {reminder_id}. Use list_reminders to see your reminders."
+
+    return create_reminder, list_reminders, update_reminder, delete_reminder

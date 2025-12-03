@@ -76,22 +76,15 @@ def create_app_context(
     Returns:
         Fully initialized AppContext
     """
-    from agent.tools.reminder import ReminderManager, set_reminder_manager
-    from agent.tools.timer import TimerManager, set_timer_manager
+    from agent.tools import ReminderManager, TimerManager
     from audio.manager import AudioManager
     from rex.settings import load_settings
 
     event_bus = EventBus()
 
-    # Create audio_manager first since other components depend on it
     audio_mgr = audio_manager or AudioManager(event_bus=event_bus)
-
-    # Create managers and register them for tool access
     timer_mgr = timer_manager or TimerManager(event_bus=event_bus, audio_manager=audio_mgr)
-    set_timer_manager(timer_mgr)
-
     reminder_mgr = reminder_manager or ReminderManager(event_bus=event_bus)
-    set_reminder_manager(reminder_mgr)
 
     return AppContext(
         event_bus=event_bus,

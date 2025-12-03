@@ -7,16 +7,13 @@ from langgraph.types import Command
 
 from .base_agent import create_agent, create_checkpointer
 from .tools import (
+    ReminderManager,
+    TimerManager,
     calculate,
-    check_timers,
-    create_reminder,
-    delete_reminder,
+    create_reminder_tools,
+    create_timer_tools,
     get_current_time,
-    list_reminders,
-    set_timer,
-    stop_timer,
     tool_requires_confirmation,
-    update_reminder,
 )
 
 # Maximum number of messages to keep in history to prevent unbounded growth
@@ -27,23 +24,42 @@ _agent = None
 _checkpointer = None
 
 
+def initialize_agent(timer_manager: TimerManager, reminder_manager: ReminderManager) -> None:
+    """
+    Initialize the agent with the given managers.
+
+    Must be called before using run_voice_agent or confirm_tool_call.
+
+    Args:
+        timer_manager: TimerManager instance to use for timer tools
+        reminder_manager: ReminderManager instance to use for reminder tools
+    """
+    global _agent, _checkpointer
+
+    # Create tools with injected managers
+    set_timer, check_timers, stop_timer = create_timer_tools(timer_manager)
+    create_reminder, list_reminders, update_reminder, delete_reminder = create_reminder_tools(reminder_manager)
+
+    tools = [
+        get_current_time,
+        calculate,
+        set_timer,
+        check_timers,
+        stop_timer,
+        create_reminder,
+        list_reminders,
+        update_reminder,
+        delete_reminder,
+    ]
+    _checkpointer = create_checkpointer()
+    _agent = create_agent(tools, checkpointer=_checkpointer)
+
+
 def _get_agent():
-    """Get or create the cached agent instance with checkpointer."""
+    """Get the cached agent instance with checkpointer."""
     global _agent, _checkpointer
     if _agent is None:
-        tools = [
-            get_current_time,
-            calculate,
-            set_timer,
-            check_timers,
-            stop_timer,
-            create_reminder,
-            list_reminders,
-            update_reminder,
-            delete_reminder,
-        ]
-        _checkpointer = create_checkpointer()
-        _agent = create_agent(tools, checkpointer=_checkpointer)
+        raise RuntimeError("Agent not initialized. Call initialize_agent() first.")
     return _agent, _checkpointer
 
 

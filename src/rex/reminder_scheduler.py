@@ -41,9 +41,9 @@ class ReminderScheduler:
 
     def __init__(
         self,
+        reminder_manager: "ReminderManager",
+        reminder_settings: "ReminderSettings",
         on_reminder_due: Callable[[ReminderDelivery], None] | None = None,
-        reminder_manager: "ReminderManager | None" = None,
-        reminder_settings: "ReminderSettings | None" = None,
         event_bus: "EventBus | None" = None,
         audio_manager: "AudioManager | None" = None,
     ):
@@ -51,18 +51,12 @@ class ReminderScheduler:
         Initialize the reminder scheduler.
 
         Args:
+            reminder_manager: ReminderManager instance for accessing reminders
+            reminder_settings: ReminderSettings instance for configuration
             on_reminder_due: Callback when a reminder is due
-            reminder_manager: ReminderManager instance (uses default if not provided)
-            reminder_settings: ReminderSettings instance (uses default if not provided)
             event_bus: EventBus for schedule change notifications
             audio_manager: AudioManager instance for audio output
         """
-        # Import here to avoid circular imports and allow optional DI
-        if reminder_manager is None:
-            from agent.tools.reminder import get_reminder_manager
-
-            reminder_manager = get_reminder_manager()
-
         self._reminder_manager = reminder_manager
         self._reminder_settings = reminder_settings
         self._event_bus = event_bus
@@ -81,13 +75,8 @@ class ReminderScheduler:
         self._ding_path = Path("sounds/ding.mp3")
 
     def _get_retry_minutes(self) -> int:
-        """Get retry minutes from settings or default."""
-        if self._reminder_settings:
-            return self._reminder_settings.retry_minutes
-        # Fallback to loading settings if not provided
-        from rex.settings import get_settings
-
-        return get_settings().reminders.retry_minutes
+        """Get retry minutes from settings."""
+        return self._reminder_settings.retry_minutes
 
     def start(self):
         """Start the background scheduler thread."""

@@ -8,7 +8,6 @@ from agent.tools.timer import (
     TimerManager,
     TimerState,
     parse_duration,
-    set_timer_manager,
 )
 
 
@@ -116,9 +115,6 @@ class TestTimerManager:
             manager = TimerManager()
             # Disable sound playback in tests
             manager._sound_data = None
-
-            # Set as the module-level manager for tool access
-            set_timer_manager(manager)
 
             yield manager
 

@@ -8,6 +8,7 @@ import sys
 import threading
 from pathlib import Path
 
+from agent import initialize_agent
 from core import StateMachine, create_app_context
 from rex.reminder_scheduler import ReminderDelivery, ReminderScheduler
 from rex.states import create_all_handlers
@@ -21,6 +22,9 @@ def main():
     print("🚀 Starting Rex Voice Assistant...")
 
     ctx = create_app_context()
+
+    # Initialize the agent with managers from context
+    initialize_agent(ctx.timer_manager, ctx.reminder_manager)
 
     model_path = Path(
         f"models/wake_word_models/{ctx.settings.wake_word.path_label}/{ctx.settings.wake_word.path_label}.onnx",
@@ -52,9 +56,9 @@ def main():
         listener.interrupt()  # Thread-safe interrupt
 
     scheduler = ReminderScheduler(
-        on_reminder_due=on_reminder_due,
         reminder_manager=ctx.reminder_manager,
         reminder_settings=ctx.settings.reminders,
+        on_reminder_due=on_reminder_due,
         event_bus=ctx.event_bus,
         audio_manager=ctx.audio_manager,
     )

@@ -328,59 +328,47 @@ def parse_duration(duration_str: str) -> float | None:
     return total_seconds if found_any and total_seconds > 0 else None
 
 
-# Module-level instance for tool access
-# This gets set by the AppContext during initialization
-_timer_manager: TimerManager | None = None
-
-
-def set_timer_manager(manager: TimerManager) -> None:
-    """Set the module-level timer manager instance for tool access."""
-    global _timer_manager
-    _timer_manager = manager
-
-
-def get_timer_manager() -> TimerManager:
+def create_timer_tools(manager: TimerManager) -> tuple:
     """
-    Get the timer manager instance.
-
-    Returns the configured instance, or creates a default one if not set.
-    """
-    global _timer_manager
-    if _timer_manager is None:
-        _timer_manager = TimerManager()
-    return _timer_manager
-
-
-@tool
-def set_timer(duration: str, name: str = "timer") -> str:
-    """Set a timer.
+    Create timer tools with the given manager injected.
 
     Args:
-        duration: e.g. "5 minutes", "30 seconds", "1 hour 30 minutes"
-        name: Optional timer name (default: "timer")
-    """
-    seconds = parse_duration(duration)
-    if seconds is None:
-        return (
-            f"Could not understand duration '{duration}'. "
-            "Try formats like '5 minutes', '30 seconds', or '1 hour 30 minutes'."
-        )
-
-    return get_timer_manager().set_timer(name, seconds)
-
-
-@tool
-def check_timers() -> str:
-    """
-    Check the status of all active timers.
+        manager: TimerManager instance to use for all operations
 
     Returns:
-        Status of all timers including remaining time or if they're currently ringing.
+        Tuple of (set_timer, check_timers, stop_timer) tools
     """
-    return get_timer_manager().check_timers()
 
+    @tool
+    def set_timer(duration: str, name: str = "timer") -> str:
+        """Set a timer.
 
-@tool
-def stop_timer(name: str | None = None) -> str:
-    """Stop a ringing alarm or cancel a timer. If name is omitted, stops the current alarm."""
-    return get_timer_manager().stop_timer(name)
+        Args:
+            duration: e.g. "5 minutes", "30 seconds", "1 hour 30 minutes"
+            name: Optional timer name (default: "timer")
+        """
+        seconds = parse_duration(duration)
+        if seconds is None:
+            return (
+                f"Could not understand duration '{duration}'. "
+                "Try formats like '5 minutes', '30 seconds', or '1 hour 30 minutes'."
+            )
+
+        return manager.set_timer(name, seconds)
+
+    @tool
+    def check_timers() -> str:
+        """
+        Check the status of all active timers.
+
+        Returns:
+            Status of all timers including remaining time or if they're currently ringing.
+        """
+        return manager.check_timers()
+
+    @tool
+    def stop_timer(name: str | None = None) -> str:
+        """Stop a ringing alarm or cancel a timer. If name is omitted, stops the current alarm."""
+        return manager.stop_timer(name)
+
+    return set_timer, check_timers, stop_timer

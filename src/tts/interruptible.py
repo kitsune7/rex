@@ -66,6 +66,8 @@ class InterruptibleSpeaker:
             - captured_audio: numpy array of captured audio if interrupted, else None
         """
         self._monitor.start()
+        if not self._monitor.wait_until_ready(timeout=1.0):
+            print("⚠️ Wake word monitor failed to start")
 
         try:
             was_interrupted = speak_text(

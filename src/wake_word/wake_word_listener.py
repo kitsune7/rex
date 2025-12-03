@@ -74,6 +74,7 @@ class WakeWordMonitor:
         # Threading state
         self._detected_event = threading.Event()
         self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
         self._thread: threading.Thread | None = None
 
         # Captured audio after wake word detection
@@ -90,6 +91,7 @@ class WakeWordMonitor:
                 blocksize=self.chunk_size,
             )
             with stream:
+                self._ready_event.set()  # Signal that we're ready to detect
                 self._wake_model.reset()
                 while not self._stop_event.is_set():
                     audio_chunk, _ = stream.read(self.chunk_size)
@@ -105,8 +107,8 @@ class WakeWordMonitor:
                             # Continue recording until silence
                             self._capture_until_silence(stream)
                             return
-        except Exception:
-            pass  # Silently handle audio errors
+        except Exception as e:
+            print(f"⚠️ Wake word monitor error: {e}")
 
     def _capture_until_silence(self, stream: sd.InputStream):
         """Continue recording after wake word until VAD detects silence."""
@@ -178,9 +180,22 @@ class WakeWordMonitor:
         """Reset the detection state."""
         self._detected_event.clear()
         self._stop_event.clear()
+        self._ready_event.clear()
         self._ring_buffer.clear()
         with self._audio_lock:
             self._captured_audio = None
+
+    def wait_until_ready(self, timeout: float = 1.0) -> bool:
+        """
+        Wait for the monitor to be ready to detect wake words.
+
+        Args:
+            timeout: Maximum seconds to wait for the monitor to be ready.
+
+        Returns:
+            True if the monitor is ready, False if timeout occurred.
+        """
+        return self._ready_event.wait(timeout=timeout)
 
 
 class VADProcessor:

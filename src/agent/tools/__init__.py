@@ -4,23 +4,14 @@ from .reminder import (
     Reminder,
     ReminderManager,
     ReminderStatus,
-    create_reminder,
-    delete_reminder,
-    get_reminder_manager,
-    list_reminders,
-    set_reminder_manager,
+    create_reminder_tools,
     tool_requires_confirmation,
-    update_reminder,
 )
 from .time import get_current_time
 from .timer import (
     TimerManager,
-    check_timers,
-    get_timer_manager,
+    create_timer_tools,
     parse_duration,
-    set_timer,
-    set_timer_manager,
-    stop_timer,
 )
 
 __all__ = [
@@ -29,20 +20,11 @@ __all__ = [
     # Math tool
     "calculate",
     # Timer tools and manager
-    "set_timer",
-    "check_timers",
-    "stop_timer",
-    "get_timer_manager",
-    "set_timer_manager",
+    "create_timer_tools",
     "TimerManager",
     "parse_duration",
     # Reminder tools and manager
-    "create_reminder",
-    "list_reminders",
-    "update_reminder",
-    "delete_reminder",
-    "get_reminder_manager",
-    "set_reminder_manager",
+    "create_reminder_tools",
     "ReminderManager",
     "ReminderStatus",
     "Reminder",
