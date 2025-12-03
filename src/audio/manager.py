@@ -8,6 +8,7 @@ Coordinates all audio I/O operations:
 - Muting support during conversations
 """
 
+import queue
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -83,6 +84,22 @@ class AudioManager:
         # Active streams
         self._input_stream: sd.InputStream | None = None
 
+        # Persistent output stream for feedback tones (avoids cold-start pops)
+        self._output_queue: queue.Queue[np.ndarray] = queue.Queue()
+        self._current_output: np.ndarray | None = None
+        self._output_position = 0
+        self._loop_audio: np.ndarray | None = None
+        self._output_lock = threading.Lock()
+
+        self._output_stream = sd.OutputStream(
+            samplerate=self._config.FEEDBACK_SAMPLE_RATE,
+            channels=1,
+            dtype=np.float32,
+            callback=self._output_callback,
+            blocksize=1024,
+        )
+        self._output_stream.start()
+
     @property
     def config(self) -> AudioConfig:
         """Get audio configuration."""
@@ -92,6 +109,77 @@ class AudioManager:
     def is_muted(self) -> bool:
         """Check if audio output is muted."""
         return self._muted
+
+    def _output_callback(self, outdata: np.ndarray, frames: int, time, status) -> None:
+        """
+        Fill output buffer from queued audio, loop audio, or silence.
+
+        Called by sounddevice from a separate thread.
+        """
+        output_pos = 0
+
+        while output_pos < frames:
+            # If we have current audio being played, continue it
+            if self._current_output is not None:
+                remaining = len(self._current_output) - self._output_position
+                to_copy = min(remaining, frames - output_pos)
+                outdata[output_pos : output_pos + to_copy, 0] = self._current_output[
+                    self._output_position : self._output_position + to_copy
+                ]
+                self._output_position += to_copy
+                output_pos += to_copy
+
+                # Check if we finished this audio
+                if self._output_position >= len(self._current_output):
+                    self._current_output = None
+                    self._output_position = 0
+                continue
+
+            # Try to get next audio from queue (non-blocking)
+            try:
+                self._current_output = self._output_queue.get_nowait()
+                self._output_position = 0
+                continue
+            except queue.Empty:
+                pass
+
+            # Check for loop audio
+            with self._output_lock:
+                if self._loop_audio is not None:
+                    self._current_output = self._loop_audio.copy()
+                    self._output_position = 0
+                    continue
+
+            # No audio available - output silence for remaining frames
+            outdata[output_pos:, 0] = 0.0
+            break
+
+    def queue_audio(self, audio: np.ndarray) -> None:
+        """
+        Queue audio for playback through the persistent stream.
+
+        Args:
+            audio: Audio data as float32 numpy array at FEEDBACK_SAMPLE_RATE
+        """
+        if not self._muted:
+            self._output_queue.put(audio.astype(np.float32))
+
+    def start_loop(self, audio: np.ndarray) -> None:
+        """
+        Start looping audio through the persistent stream.
+
+        Used for continuous feedback like the thinking tone.
+
+        Args:
+            audio: Audio data as float32 numpy array at FEEDBACK_SAMPLE_RATE
+        """
+        with self._output_lock:
+            self._loop_audio = audio.astype(np.float32)
+
+    def stop_loop(self) -> None:
+        """Stop any currently looping audio."""
+        with self._output_lock:
+            self._loop_audio = None
 
     def mute(self) -> None:
         """Mute audio output. Stops any currently playing sound."""
@@ -260,6 +348,16 @@ class AudioManager:
     def cleanup(self) -> None:
         """Clean up audio resources."""
         self.stop()
+        self.stop_loop()
+
+        # Stop persistent output stream
+        if self._output_stream is not None:
+            try:
+                self._output_stream.stop()
+                self._output_stream.close()
+            except Exception:
+                pass
+
         if self._input_stream is not None:
             try:
                 self._input_stream.close()

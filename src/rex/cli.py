@@ -8,6 +8,7 @@ import sys
 import threading
 from pathlib import Path
 
+from audio import init_audio_feedback
 from core import StateMachine, create_app_context
 from rex.reminder_scheduler import ReminderDelivery, ReminderScheduler
 from rex.states import create_all_handlers
@@ -21,6 +22,10 @@ def main():
     print("🚀 Starting Rex Voice Assistant...")
 
     ctx = create_app_context()
+
+    # Initialize audio feedback with the shared AudioManager
+    if ctx.audio_manager:
+        init_audio_feedback(ctx.audio_manager)
 
     model_path = Path(
         f"models/wake_word_models/{ctx.settings.wake_word.path_label}/{ctx.settings.wake_word.path_label}.onnx",
@@ -73,6 +78,8 @@ def main():
         listener.stop()
         if ctx.timer_manager:
             ctx.timer_manager.cleanup()
+        if ctx.audio_manager:
+            ctx.audio_manager.cleanup()
 
     return 0
 

@@ -5,12 +5,22 @@ Plays short musical tones to indicate listening state:
 - Ascending C→G: Rex is now listening
 - Descending G→C: Rex has finished listening
 - Looping D→A: Rex is thinking (waiting for LLM)
+
+Uses a persistent audio stream via AudioManager to avoid cold-start pops.
+Call init_audio_feedback() during app startup to enable this.
 """
 
-import threading
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import numpy as np
-import sounddevice as sd
+
+if TYPE_CHECKING:
+    from audio.manager import AudioManager
+
+# Module-level AudioManager reference (set via init_audio_feedback)
+_audio_manager: AudioManager | None = None
 
 # Note frequencies (Hz)
 C4 = 261.63  # Middle C
@@ -29,18 +39,41 @@ THINKING_GAP_DURATION = 0.05
 THINKING_VOLUME = 0.2
 
 
+def init_audio_feedback(audio_manager: AudioManager) -> None:
+    """
+    Initialize audio feedback with a shared AudioManager.
+
+    Call this during app startup to enable pop-free playback
+    through AudioManager's persistent audio stream.
+
+    Args:
+        audio_manager: The AudioManager instance to use for playback
+    """
+    global _audio_manager
+    _audio_manager = audio_manager
+
+
 def _generate_tone(
     frequency: float,
     duration: float,
     sample_rate: int = SAMPLE_RATE,
     volume: float = 0.3,
+    envelope_duration: float = 0.02,
 ) -> np.ndarray:
-    """Generate a sine wave tone with smooth attack and release."""
+    """Generate a sine wave tone with smooth attack and release.
+
+    Args:
+        frequency: Tone frequency in Hz
+        duration: Tone duration in seconds
+        sample_rate: Audio sample rate
+        volume: Volume multiplier (0.0 to 1.0)
+        envelope_duration: Duration of fade-in/fade-out in seconds (default 20ms)
+    """
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     tone = np.sin(2 * np.pi * frequency * t)
 
-    # Apply raised cosine envelope to avoid clicks (20ms attack/release)
-    envelope_samples = int(0.02 * sample_rate)
+    # Apply raised cosine envelope to avoid clicks
+    envelope_samples = int(envelope_duration * sample_rate)
     envelope = np.ones_like(tone)
     # Fade in: 0.5 * (1 - cos(pi * t)) goes from 0 to 1 smoothly
     envelope[:envelope_samples] = 0.5 * (1 - np.cos(np.pi * np.linspace(0, 1, envelope_samples)))
@@ -59,27 +92,30 @@ def _generate_two_tone_sequence(freq1: float, freq2: float) -> np.ndarray:
     return np.concatenate([tone1, gap, tone2])
 
 
-def _play_audio(audio: np.ndarray):
-    """Play audio (intended to be run in a thread)."""
-    try:
-        sd.play(audio, SAMPLE_RATE)
-        sd.wait()
-    except Exception:
-        pass  # Silently ignore audio errors
-
-
 def play_listening_tone():
     """Play ascending C→G tone to indicate Rex is listening. Non-blocking."""
     audio = _generate_two_tone_sequence(C4, G4)
-    thread = threading.Thread(target=_play_audio, args=(audio,), daemon=True)
-    thread.start()
+    if _audio_manager is not None:
+        _audio_manager.queue_audio(audio)
+    # If AudioManager not initialized, tone is silently skipped
 
 
 def play_done_tone():
     """Play descending G→C tone to indicate Rex has finished listening. Non-blocking."""
     audio = _generate_two_tone_sequence(G4, C4)
-    thread = threading.Thread(target=_play_audio, args=(audio,), daemon=True)
-    thread.start()
+    if _audio_manager is not None:
+        _audio_manager.queue_audio(audio)
+    # If AudioManager not initialized, tone is silently skipped
+
+
+def _generate_thinking_sequence() -> np.ndarray:
+    """Generate a D→A tone sequence with slower timing for thinking feedback."""
+    # Use longer 50ms envelope for smoother fade-in (reduces pop at loop start)
+    tone1 = _generate_tone(D4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME, envelope_duration=0.05)
+    gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
+    tone2 = _generate_tone(A4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME, envelope_duration=0.05)
+    trailing_gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
+    return np.concatenate([tone1, gap, tone2, trailing_gap])
 
 
 class ThinkingTone:
@@ -90,11 +126,9 @@ class ThinkingTone:
         with ThinkingTone():
             # tone plays during this block
             result = slow_operation()
-    """
 
-    def __init__(self):
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
+    Uses AudioManager's persistent stream for pop-free looping.
+    """
 
     def __enter__(self):
         self.start()
@@ -104,35 +138,14 @@ class ThinkingTone:
         self.stop()
         return False  # Don't suppress exceptions
 
-    def _generate_thinking_sequence(self) -> np.ndarray:
-        """Generate a D→A tone sequence with slower timing."""
-        tone1 = _generate_tone(D4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
-        gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
-        tone2 = _generate_tone(A4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
-        trailing_gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
-        return np.concatenate([tone1, gap, tone2, trailing_gap])
-
-    def _play_loop(self):
-        """Play the thinking tone on loop until stopped."""
-        audio = self._generate_thinking_sequence()
-
-        while not self._stop_event.is_set():
-            try:
-                sd.play(audio, SAMPLE_RATE)
-                sd.wait()  # Proper sync - no overlap
-            except Exception:
-                pass  # Silently ignore audio errors
-
     def start(self):
         """Start playing the thinking tone. Non-blocking."""
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._play_loop, daemon=True)
-        self._thread.start()
+        if _audio_manager is not None:
+            audio = _generate_thinking_sequence()
+            _audio_manager.start_loop(audio)
+        # If AudioManager not initialized, tone is silently skipped
 
     def stop(self):
         """Stop the thinking tone."""
-        self._stop_event.set()
-        # Don't call sd.stop() - let current sequence finish to avoid pop
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)  # Allow time for sequence to complete
-            self._thread = None
+        if _audio_manager is not None:
+            _audio_manager.stop_loop()
