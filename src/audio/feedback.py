@@ -6,8 +6,7 @@ Plays short musical tones to indicate listening state:
 - Descending G→C: Rex has finished listening
 - Looping D→A: Rex is thinking (waiting for LLM)
 
-Uses a persistent audio stream via AudioManager to avoid cold-start pops.
-Call init_audio_feedback() during app startup to enable this.
+All tones are played through AudioManager for coordinated audio output.
 """
 
 from __future__ import annotations
@@ -18,9 +17,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from audio.manager import AudioManager
-
-# Module-level AudioManager reference (set via init_audio_feedback)
-_audio_manager: AudioManager | None = None
 
 # Note frequencies (Hz)
 C4 = 261.63  # Middle C
@@ -37,20 +33,6 @@ GAP_DURATION = 0.05  # seconds between notes
 THINKING_NOTE_DURATION = 0.4
 THINKING_GAP_DURATION = 0.05
 THINKING_VOLUME = 0.2
-
-
-def init_audio_feedback(audio_manager: AudioManager) -> None:
-    """
-    Initialize audio feedback with a shared AudioManager.
-
-    Call this during app startup to enable pop-free playback
-    through AudioManager's persistent audio stream.
-
-    Args:
-        audio_manager: The AudioManager instance to use for playback
-    """
-    global _audio_manager
-    _audio_manager = audio_manager
 
 
 def _generate_tone(
@@ -92,23 +74,17 @@ def _generate_two_tone_sequence(freq1: float, freq2: float) -> np.ndarray:
     return np.concatenate([tone1, gap, tone2])
 
 
-def play_listening_tone():
-    """Play ascending C→G tone to indicate Rex is listening. Non-blocking."""
-    audio = _generate_two_tone_sequence(C4, G4)
-    if _audio_manager is not None:
-        _audio_manager.queue_audio(audio)
-    # If AudioManager not initialized, tone is silently skipped
+def generate_listening_tone() -> np.ndarray:
+    """Generate ascending C→G tone to indicate Rex is listening."""
+    return _generate_two_tone_sequence(C4, G4)
 
 
-def play_done_tone():
-    """Play descending G→C tone to indicate Rex has finished listening. Non-blocking."""
-    audio = _generate_two_tone_sequence(G4, C4)
-    if _audio_manager is not None:
-        _audio_manager.queue_audio(audio)
-    # If AudioManager not initialized, tone is silently skipped
+def generate_done_tone() -> np.ndarray:
+    """Generate descending G→C tone to indicate Rex has finished listening."""
+    return _generate_two_tone_sequence(G4, C4)
 
 
-def _generate_thinking_sequence() -> np.ndarray:
+def generate_thinking_sequence() -> np.ndarray:
     """Generate a D→A tone sequence with slower timing for thinking feedback."""
     # Use longer 50ms envelope for smoother fade-in (reduces pop at loop start)
     tone1 = _generate_tone(D4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME, envelope_duration=0.05)
@@ -123,12 +99,15 @@ class ThinkingTone:
     Looping D→A tone that plays while waiting for LLM inference.
 
     Can be used as a context manager:
-        with ThinkingTone():
+        with ThinkingTone(audio_manager):
             # tone plays during this block
             result = slow_operation()
 
     Uses AudioManager's persistent stream for pop-free looping.
     """
+
+    def __init__(self, audio_manager: AudioManager):
+        self._audio_manager = audio_manager
 
     def __enter__(self):
         self.start()
@@ -140,12 +119,9 @@ class ThinkingTone:
 
     def start(self):
         """Start playing the thinking tone. Non-blocking."""
-        if _audio_manager is not None:
-            audio = _generate_thinking_sequence()
-            _audio_manager.start_loop(audio)
-        # If AudioManager not initialized, tone is silently skipped
+        audio = generate_thinking_sequence()
+        self._audio_manager.start_loop(audio)
 
     def stop(self):
         """Stop the thinking tone."""
-        if _audio_manager is not None:
-            _audio_manager.stop_loop()
+        self._audio_manager.stop_loop()

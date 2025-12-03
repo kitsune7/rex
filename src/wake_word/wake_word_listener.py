@@ -6,10 +6,13 @@ When wake word is detected, continues recording until silence, then returns
 the complete audio (buffered + new) for transcription.
 """
 
+from __future__ import annotations
+
 import collections
 import threading
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 import sounddevice as sd
@@ -17,9 +20,10 @@ import torch
 from openwakeword import Model
 from silero_vad import load_silero_vad
 
-from audio import play_done_tone, play_listening_tone
-
 from .model_utils import ensure_openwakeword_models
+
+if TYPE_CHECKING:
+    from audio.manager import AudioManager
 
 
 class WakeWordMonitor:
@@ -27,20 +31,31 @@ class WakeWordMonitor:
     Background wake word detector for interruption during TTS playback.
 
     Runs in a separate thread and sets an event when wake word is detected.
-    Use this to allow users to interrupt Rex while he's speaking.
+    Also captures audio in a rolling buffer so interrupted speech can be
+    processed immediately without requiring the user to repeat themselves.
     """
 
-    def __init__(self, model_path: str, threshold: float = 0.5):
+    def __init__(
+        self,
+        model_path: str,
+        threshold: float = 0.5,
+        buffer_duration: float = 3.0,
+        silence_duration: float = 1.5,
+    ):
         """
         Initialize the wake word monitor.
 
         Args:
             model_path: Path to the .onnx wake word model file
             threshold: Detection threshold (0.0 to 1.0)
+            buffer_duration: Seconds of audio to keep in rolling buffer
+            silence_duration: Seconds of silence to stop recording after wake word
         """
         self.threshold = threshold
         self.sample_rate = 16000
         self.chunk_size = 1280  # 80ms chunks
+        self.buffer_duration = buffer_duration
+        self.silence_duration = silence_duration
 
         # Ensure openwakeword models are available
         if not ensure_openwakeword_models():
@@ -49,13 +64,24 @@ class WakeWordMonitor:
         # Load wake word model (separate instance for this monitor)
         self._wake_model = Model(wakeword_models=[model_path], inference_framework="onnx")
 
+        # Load VAD model for end-of-speech detection
+        self._vad_model = load_silero_vad()
+
+        # Rolling buffer for audio capture
+        buffer_samples = int(self.sample_rate * buffer_duration)
+        self._ring_buffer: collections.deque = collections.deque(maxlen=buffer_samples)
+
         # Threading state
         self._detected_event = threading.Event()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
+        # Captured audio after wake word detection
+        self._captured_audio: np.ndarray | None = None
+        self._audio_lock = threading.Lock()
+
     def _monitor_loop(self):
-        """Background thread that listens for wake word."""
+        """Background thread that listens for wake word and captures audio."""
         try:
             stream = sd.InputStream(
                 samplerate=self.sample_rate,
@@ -69,13 +95,52 @@ class WakeWordMonitor:
                     audio_chunk, _ = stream.read(self.chunk_size)
                     audio_chunk = audio_chunk.flatten()
 
+                    # Add to rolling buffer
+                    self._ring_buffer.extend(audio_chunk)
+
                     predictions = self._wake_model.predict(audio_chunk)
                     for score in predictions.values():
                         if score >= self.threshold:
                             self._detected_event.set()
-                            return  # Stop monitoring once detected
+                            # Continue recording until silence
+                            self._capture_until_silence(stream)
+                            return
         except Exception:
             pass  # Silently handle audio errors
+
+    def _capture_until_silence(self, stream: sd.InputStream):
+        """Continue recording after wake word until VAD detects silence."""
+        # Start with buffered audio
+        audio_chunks = [np.array(self._ring_buffer, dtype=np.int16)]
+
+        last_speech_time = time.time()
+        speech_detected = False
+        vad = VADProcessor(self._vad_model, self.sample_rate)
+
+        while not self._stop_event.is_set():
+            try:
+                audio_chunk, _ = stream.read(self.chunk_size)
+                audio_chunk = audio_chunk.flatten()
+                audio_chunks.append(audio_chunk)
+                vad.add_audio(audio_chunk)
+
+                for speech_prob in vad.process():
+                    if speech_prob > 0.5:
+                        speech_detected = True
+                        last_speech_time = time.time()
+
+                    # Stop if speech was detected and now silent
+                    if speech_detected and (time.time() - last_speech_time) > self.silence_duration:
+                        with self._audio_lock:
+                            self._captured_audio = np.concatenate(audio_chunks)
+                        return
+            except Exception:
+                break
+
+        # Save whatever we captured
+        if audio_chunks:
+            with self._audio_lock:
+                self._captured_audio = np.concatenate(audio_chunks)
 
     def start(self):
         """Start monitoring for wake word in the background."""
@@ -92,17 +157,30 @@ class WakeWordMonitor:
         """Stop monitoring."""
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=0.5)
+            self._thread.join(timeout=1.0)  # Longer timeout to allow audio capture to complete
             self._thread = None
 
     def was_detected(self) -> bool:
         """Check if wake word was detected (non-blocking)."""
         return self._detected_event.is_set()
 
+    def get_captured_audio(self) -> np.ndarray | None:
+        """
+        Get the audio captured after wake word detection.
+
+        Returns:
+            numpy array of audio samples, or None if no audio captured.
+        """
+        with self._audio_lock:
+            return self._captured_audio
+
     def reset(self):
         """Reset the detection state."""
         self._detected_event.clear()
         self._stop_event.clear()
+        self._ring_buffer.clear()
+        with self._audio_lock:
+            self._captured_audio = None
 
 
 class VADProcessor:
@@ -145,6 +223,7 @@ class WakeWordListener:
     def __init__(
         self,
         model_path: str,
+        audio_manager: AudioManager,
         threshold: float = 0.5,
         buffer_duration: float = 3.0,
         silence_duration: float = 1.5,
@@ -154,10 +233,12 @@ class WakeWordListener:
 
         Args:
             model_path: Path to the .onnx wake word model file
+            audio_manager: AudioManager instance for audio output
             threshold: Detection threshold (0.0 to 1.0)
             buffer_duration: Seconds of audio to keep in rolling buffer
             silence_duration: Seconds of silence to stop recording after wake word
         """
+        self._audio_manager = audio_manager
         self.threshold = threshold
         self.sample_rate = 16000
         self.chunk_size = 1280  # 80ms chunks for wake word detection
@@ -180,8 +261,8 @@ class WakeWordListener:
         print("Loading VAD model...")
         self._vad_model = load_silero_vad()
 
-        # State
-        self._interrupted = False
+        # State (using Event for thread-safe interruption)
+        self._interrupted = threading.Event()
         self._stream = None
 
     def _create_audio_stream(self) -> sd.InputStream:
@@ -205,7 +286,7 @@ class WakeWordListener:
             numpy array of audio samples (including buffered pre-wake-word audio),
             or None if interrupted.
         """
-        self._interrupted = False
+        self._interrupted.clear()
         self._ring_buffer.clear()
         self._wake_model.reset()
 
@@ -220,7 +301,7 @@ class WakeWordListener:
                 print("🔔 Wake word detected! Transcribing audio...")
 
                 # Play ascending tone to indicate listening
-                play_listening_tone()
+                self._audio_manager.play_listening_tone()
 
                 # Invoke callback (e.g., to mute timer sounds)
                 if on_wake_word:
@@ -230,7 +311,7 @@ class WakeWordListener:
                 audio = self._record_until_silence()
 
                 # Play descending tone to indicate done listening
-                play_done_tone()
+                self._audio_manager.play_done_tone()
 
                 return audio
 
@@ -245,7 +326,7 @@ class WakeWordListener:
         Returns:
             True if wake word detected, False if interrupted.
         """
-        while not self._interrupted:
+        while not self._interrupted.is_set():
             audio_chunk, _ = self._stream.read(self.chunk_size)
             audio_chunk = audio_chunk.flatten()
 
@@ -280,7 +361,7 @@ class WakeWordListener:
         speech_detected = False
         vad = VADProcessor(self._vad_model, self.sample_rate)
 
-        while not self._interrupted:
+        while not self._interrupted.is_set():
             audio_chunk, _ = self._stream.read(self.chunk_size)
             audio_chunk = audio_chunk.flatten()
             audio_chunks.append(audio_chunk)
@@ -297,7 +378,9 @@ class WakeWordListener:
 
         return np.concatenate(audio_chunks) if audio_chunks else np.array([], dtype=np.int16)
 
-    def listen_for_speech(self, timeout: float = 5.0) -> np.ndarray | None:
+    def listen_for_speech(
+        self, timeout: float = 5.0, play_tones: bool = True
+    ) -> np.ndarray | None:
         """
         Listen for speech without requiring wake word detection.
 
@@ -307,12 +390,14 @@ class WakeWordListener:
 
         Args:
             timeout: Maximum seconds to wait for speech to begin.
+            play_tones: If True, play listening/done tones. Set to False if
+                        the caller has already played a ready tone.
 
         Returns:
             numpy array of audio samples if speech detected,
             or None if timeout occurred without speech.
         """
-        self._interrupted = False
+        self._interrupted.clear()
         self._ring_buffer.clear()
 
         vad = VADProcessor(self._vad_model, self.sample_rate)
@@ -323,7 +408,7 @@ class WakeWordListener:
         try:
             with self._stream:
                 # Wait for speech to start (with timeout)
-                while not self._interrupted:
+                while not self._interrupted.is_set():
                     # Check timeout
                     if (time.time() - start_time) > timeout:
                         return None
@@ -337,9 +422,6 @@ class WakeWordListener:
 
                     for speech_prob in vad.process():
                         if speech_prob > 0.5:
-                            # Speech detected! Play ascending tone
-                            play_listening_tone()
-
                             # Trim ring buffer to only recent audio
                             # to avoid including long periods of silence from wait phase
                             recent_samples = int(0.5 * self.sample_rate)  # 0.5 seconds
@@ -351,7 +433,8 @@ class WakeWordListener:
                             audio = self._record_until_silence(include_buffer=True)
 
                             # Play descending tone to indicate done listening
-                            play_done_tone()
+                            if play_tones:
+                                self._audio_manager.play_done_tone()
 
                             return audio
 
@@ -363,9 +446,17 @@ class WakeWordListener:
 
     def stop(self):
         """Stop listening and clean up."""
-        self._interrupted = True
+        self._interrupted.set()
         if self._stream is not None:
             try:
                 self._stream.close()
             except Exception:
                 pass
+
+    def is_interrupted(self) -> bool:
+        """Check if the listener has been interrupted (thread-safe)."""
+        return self._interrupted.is_set()
+
+    def interrupt(self) -> None:
+        """Interrupt the listener (thread-safe). Same as stop() but doesn't close stream."""
+        self._interrupted.set()

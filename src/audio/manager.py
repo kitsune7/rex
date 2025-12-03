@@ -3,8 +3,8 @@ Unified audio manager for Rex voice assistant.
 
 Coordinates all audio I/O operations:
 - Input stream management for wake word and speech capture
-- Output management for TTS and alarm sounds
-- Priority system for competing audio sources
+- Output management for TTS, alarms, and feedback sounds
+- Single persistent output stream to avoid race conditions
 - Muting support during conversations
 """
 
@@ -12,7 +12,6 @@ import queue
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,27 +23,14 @@ if TYPE_CHECKING:
     from core.events import EventBus
 
 
-class SoundPriority(IntEnum):
-    """
-    Priority levels for audio playback.
-
-    Higher priority sounds can interrupt lower priority ones.
-    """
-
-    LOW = 0  # Background sounds
-    NORMAL = 1  # Feedback tones
-    HIGH = 2  # TTS speech
-    URGENT = 3  # Alarms
-
-
 @dataclass
 class AudioConfig:
     """Audio configuration constants."""
 
     # Sample rates
     INPUT_SAMPLE_RATE: int = 16000  # For STT (Whisper expects 16kHz)
-    OUTPUT_SAMPLE_RATE: int = 22050  # For TTS (Piper default)
-    FEEDBACK_SAMPLE_RATE: int = 44100  # For generated tones
+    OUTPUT_SAMPLE_RATE: int = 44100  # Unified output sample rate
+    TTS_SAMPLE_RATE: int = 24000  # Kokoro TTS native rate
 
     # Input settings
     INPUT_CHANNELS: int = 1
@@ -56,10 +42,12 @@ class AudioManager:
     """
     Unified manager for all audio operations in Rex.
 
-    This class provides:
-    - Coordinated access to audio hardware
-    - Priority-based sound playback
-    - Muting support for conversations
+    All audio output goes through a single persistent stream to avoid
+    race conditions from multiple sd.play()/sd.stop() calls. This class provides:
+    - Single output stream for all audio (TTS, alarms, feedback tones)
+    - Automatic resampling to unified sample rate
+    - Muting support during conversations
+    - Completion signaling for blocking playback
     - Resource cleanup on shutdown
     """
 
@@ -75,24 +63,27 @@ class AudioManager:
 
         # State
         self._muted = False
-        self._current_priority = SoundPriority.LOW
         self._lock = threading.RLock()
 
-        # Sound cache
-        self._sound_cache: dict[str, tuple[np.ndarray, int]] = {}
+        # Sound cache (stores audio already resampled to OUTPUT_SAMPLE_RATE)
+        self._sound_cache: dict[str, np.ndarray] = {}
 
         # Active streams
         self._input_stream: sd.InputStream | None = None
 
-        # Persistent output stream for feedback tones (avoids cold-start pops)
-        self._output_queue: queue.Queue[np.ndarray] = queue.Queue()
+        # Persistent output stream (single stream for all audio output)
+        # Using a sentinel value to signal completion for blocking playback
+        self._COMPLETION_SENTINEL = object()
+        self._output_queue: queue.Queue[np.ndarray | object] = queue.Queue()
         self._current_output: np.ndarray | None = None
         self._output_position = 0
         self._loop_audio: np.ndarray | None = None
         self._output_lock = threading.Lock()
+        self._completion_event = threading.Event()
+        self._stop_requested = False
 
         self._output_stream = sd.OutputStream(
-            samplerate=self._config.FEEDBACK_SAMPLE_RATE,
+            samplerate=self._config.OUTPUT_SAMPLE_RATE,
             channels=1,
             dtype=np.float32,
             callback=self._output_callback,
@@ -110,12 +101,53 @@ class AudioManager:
         """Check if audio output is muted."""
         return self._muted
 
+    def _resample(self, audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
+        """
+        Resample audio from one sample rate to another using linear interpolation.
+
+        Args:
+            audio: Input audio array
+            from_rate: Source sample rate
+            to_rate: Target sample rate
+
+        Returns:
+            Resampled audio array
+        """
+        if from_rate == to_rate:
+            return audio
+
+        # Calculate the resampling ratio and new length
+        ratio = to_rate / from_rate
+        new_length = int(len(audio) * ratio)
+
+        # Use linear interpolation for resampling
+        old_indices = np.arange(len(audio))
+        new_indices = np.linspace(0, len(audio) - 1, new_length)
+        return np.interp(new_indices, old_indices, audio)
+
     def _output_callback(self, outdata: np.ndarray, frames: int, time, status) -> None:
         """
         Fill output buffer from queued audio, loop audio, or silence.
 
         Called by sounddevice from a separate thread.
         """
+        # Check if stop was requested (clear current audio immediately)
+        if self._stop_requested:
+            with self._output_lock:
+                self._current_output = None
+                self._output_position = 0
+                # Clear the queue
+                while not self._output_queue.empty():
+                    try:
+                        item = self._output_queue.get_nowait()
+                        if item is self._COMPLETION_SENTINEL:
+                            self._completion_event.set()
+                    except queue.Empty:
+                        break
+                self._stop_requested = False
+            outdata[:, 0] = 0.0
+            return
+
         output_pos = 0
 
         while output_pos < frames:
@@ -137,7 +169,12 @@ class AudioManager:
 
             # Try to get next audio from queue (non-blocking)
             try:
-                self._current_output = self._output_queue.get_nowait()
+                item = self._output_queue.get_nowait()
+                # Check for completion sentinel
+                if item is self._COMPLETION_SENTINEL:
+                    self._completion_event.set()
+                    continue
+                self._current_output = item
                 self._output_position = 0
                 continue
             except queue.Empty:
@@ -154,38 +191,107 @@ class AudioManager:
             outdata[output_pos:, 0] = 0.0
             break
 
-    def queue_audio(self, audio: np.ndarray) -> None:
+    def queue_audio(
+        self, audio: np.ndarray, sample_rate: int | None = None
+    ) -> None:
         """
         Queue audio for playback through the persistent stream.
 
         Args:
-            audio: Audio data as float32 numpy array at FEEDBACK_SAMPLE_RATE
+            audio: Audio data as numpy array
+            sample_rate: Sample rate of the audio (defaults to OUTPUT_SAMPLE_RATE)
         """
-        if not self._muted:
-            self._output_queue.put(audio.astype(np.float32))
+        if self._muted:
+            return
 
-    def start_loop(self, audio: np.ndarray) -> None:
+        if sample_rate is None:
+            sample_rate = self._config.OUTPUT_SAMPLE_RATE
+
+        # Resample if necessary
+        if sample_rate != self._config.OUTPUT_SAMPLE_RATE:
+            audio = self._resample(audio, sample_rate, self._config.OUTPUT_SAMPLE_RATE)
+
+        # Normalize to float32 in range [-1, 1]
+        audio = audio.astype(np.float32)
+        if audio.max() > 1.0 or audio.min() < -1.0:
+            # Assume int16 range, normalize
+            audio = audio / 32768.0
+
+        self._output_queue.put(audio)
+
+    def queue_audio_blocking(
+        self, audio: np.ndarray, sample_rate: int | None = None, interrupt_check=None
+    ) -> bool:
+        """
+        Queue audio and wait for it to finish playing.
+
+        Args:
+            audio: Audio data as numpy array
+            sample_rate: Sample rate of the audio (defaults to OUTPUT_SAMPLE_RATE)
+            interrupt_check: Optional callable that returns True if playback should stop
+
+        Returns:
+            True if playback was interrupted, False if completed normally
+        """
+        if self._muted:
+            return False
+
+        # Queue the audio
+        self.queue_audio(audio, sample_rate)
+
+        # Queue a completion sentinel
+        self._completion_event.clear()
+        self._output_queue.put(self._COMPLETION_SENTINEL)
+
+        # Wait for completion, checking for interrupts
+        while not self._completion_event.is_set():
+            if interrupt_check is not None and interrupt_check():
+                self.stop_current()
+                return True
+            self._completion_event.wait(timeout=0.05)
+
+        return False
+
+    def start_loop(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
         """
         Start looping audio through the persistent stream.
 
-        Used for continuous feedback like the thinking tone.
+        Used for continuous feedback like the thinking tone or alarm sounds.
 
         Args:
-            audio: Audio data as float32 numpy array at FEEDBACK_SAMPLE_RATE
+            audio: Audio data as numpy array
+            sample_rate: Sample rate of the audio (defaults to OUTPUT_SAMPLE_RATE)
         """
+        if sample_rate is None:
+            sample_rate = self._config.OUTPUT_SAMPLE_RATE
+
+        # Resample if necessary
+        if sample_rate != self._config.OUTPUT_SAMPLE_RATE:
+            audio = self._resample(audio, sample_rate, self._config.OUTPUT_SAMPLE_RATE)
+
+        # Normalize to float32
+        audio = audio.astype(np.float32)
+        if audio.max() > 1.0 or audio.min() < -1.0:
+            audio = audio / 32768.0
+
         with self._output_lock:
-            self._loop_audio = audio.astype(np.float32)
+            self._loop_audio = audio
 
     def stop_loop(self) -> None:
         """Stop any currently looping audio."""
         with self._output_lock:
             self._loop_audio = None
 
+    def stop_current(self) -> None:
+        """Stop current playback and clear the queue (but not loops)."""
+        self._stop_requested = True
+
     def mute(self) -> None:
         """Mute audio output. Stops any currently playing sound."""
         with self._lock:
             self._muted = True
-            sd.stop()
+            self.stop_current()
+            self.stop_loop()
 
     def unmute(self) -> None:
         """Unmute audio output."""
@@ -224,53 +330,9 @@ class AudioManager:
             callback=callback,
         )
 
-    def play_sound(
-        self,
-        audio: np.ndarray,
-        sample_rate: int,
-        priority: SoundPriority = SoundPriority.NORMAL,
-        blocking: bool = False,
-    ) -> bool:
-        """
-        Play an audio array with priority handling.
-
-        Args:
-            audio: Audio data as numpy array
-            sample_rate: Sample rate of the audio
-            priority: Priority level for this sound
-            blocking: If True, wait for playback to complete
-
-        Returns:
-            True if sound was played, False if muted or preempted
-        """
-        with self._lock:
-            if self._muted and priority < SoundPriority.URGENT:
-                return False
-
-            # Stop lower priority sounds
-            if priority > self._current_priority:
-                sd.stop()
-
-            self._current_priority = priority
-
-        try:
-            sd.play(audio, sample_rate)
-            if blocking:
-                sd.wait()
-            return True
-        except Exception as e:
-            print(f"Audio playback error: {e}")
-            return False
-        finally:
-            with self._lock:
-                if not blocking:
-                    # Reset priority after non-blocking play starts
-                    self._current_priority = SoundPriority.LOW
-
     def play_sound_file(
         self,
         path: str | Path,
-        priority: SoundPriority = SoundPriority.NORMAL,
         blocking: bool = False,
     ) -> bool:
         """
@@ -278,7 +340,6 @@ class AudioManager:
 
         Args:
             path: Path to the audio file
-            priority: Priority level for this sound
             blocking: If True, wait for playback to complete
 
         Returns:
@@ -289,28 +350,31 @@ class AudioManager:
 
         # Load from cache or file
         if cache_key in self._sound_cache:
-            audio, sample_rate = self._sound_cache[cache_key]
+            audio = self._sound_cache[cache_key]
         else:
             if not path.exists():
                 return False
             try:
-                audio, sample_rate = sf.read(path)
-                self._sound_cache[cache_key] = (audio, sample_rate)
+                raw_audio, sample_rate = sf.read(path)
+                # Convert to mono if stereo
+                if len(raw_audio.shape) > 1:
+                    raw_audio = raw_audio.mean(axis=1)
+                # Resample and cache
+                audio = self._resample(
+                    raw_audio.astype(np.float32),
+                    sample_rate,
+                    self._config.OUTPUT_SAMPLE_RATE,
+                )
+                self._sound_cache[cache_key] = audio
             except Exception as e:
                 print(f"Error loading sound file {path}: {e}")
                 return False
 
-        return self.play_sound(audio, sample_rate, priority, blocking)
-
-    def stop(self) -> None:
-        """Stop all currently playing audio."""
-        sd.stop()
-        with self._lock:
-            self._current_priority = SoundPriority.LOW
-
-    def wait(self) -> None:
-        """Wait for current audio playback to complete."""
-        sd.wait()
+        if blocking:
+            self.queue_audio_blocking(audio)
+        else:
+            self.queue_audio(audio)
+        return True
 
     def get_sound_duration(self, path: str | Path) -> float:
         """
@@ -326,22 +390,53 @@ class AudioManager:
         cache_key = str(path)
 
         if cache_key in self._sound_cache:
-            audio, sample_rate = self._sound_cache[cache_key]
-            return len(audio) / sample_rate
+            audio = self._sound_cache[cache_key]
+            return len(audio) / self._config.OUTPUT_SAMPLE_RATE
 
         if not path.exists():
             return 0.0
 
         try:
-            audio, sample_rate = sf.read(path)
-            self._sound_cache[cache_key] = (audio, sample_rate)
-            return len(audio) / sample_rate
+            raw_audio, sample_rate = sf.read(path)
+            if len(raw_audio.shape) > 1:
+                raw_audio = raw_audio.mean(axis=1)
+            audio = self._resample(
+                raw_audio.astype(np.float32),
+                sample_rate,
+                self._config.OUTPUT_SAMPLE_RATE,
+            )
+            self._sound_cache[cache_key] = audio
+            return len(audio) / self._config.OUTPUT_SAMPLE_RATE
         except Exception:
             return 0.0
 
+    # --- Feedback tone convenience methods ---
+
+    def play_listening_tone(self) -> None:
+        """Play ascending tone to indicate Rex is listening. Non-blocking."""
+        from .feedback import generate_listening_tone
+
+        self.queue_audio(generate_listening_tone())
+
+    def play_done_tone(self) -> None:
+        """Play descending tone to indicate Rex has finished listening. Non-blocking."""
+        from .feedback import generate_done_tone
+
+        self.queue_audio(generate_done_tone())
+
+    def start_thinking_tone(self) -> None:
+        """Start looping thinking tone. Non-blocking."""
+        from .feedback import generate_thinking_sequence
+
+        self.start_loop(generate_thinking_sequence())
+
+    def stop_thinking_tone(self) -> None:
+        """Stop the thinking tone loop."""
+        self.stop_loop()
+
     def cleanup(self) -> None:
         """Clean up audio resources."""
-        self.stop()
+        self.stop_current()
         self.stop_loop()
 
         # Stop persistent output stream

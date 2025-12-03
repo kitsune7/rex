@@ -7,7 +7,7 @@ Sends the user's query to the agent and handles the response.
 from typing import TYPE_CHECKING
 
 from agent import PendingConfirmation, run_voice_agent
-from audio.feedback import ThinkingTone
+from audio import ThinkingTone
 from core.state_machine import ConversationState, StateHandler, StateResult
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ class ProcessingHandler(StateHandler):
             print("🤔 Thinking...")
 
             # Play thinking tone while waiting for LLM
-            with ThinkingTone():
+            with ThinkingTone(ctx.audio_manager):
                 result, history, thread_id = run_voice_agent(
                     self._transcription,
                     ctx.conversation_history,

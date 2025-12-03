@@ -55,8 +55,8 @@ class SpeakingHandler(StateHandler):
 
         print(f"\n🤖 Rex: {self._response}\n")
 
-        # Speak with interruption support
-        was_interrupted = self._speaker.speak_interruptibly(self._response)
+        # Speak with interruption support - returns (was_interrupted, captured_audio)
+        was_interrupted, captured_audio = self._speaker.speak_interruptibly(self._response)
 
         if was_interrupted:
             print("🛑 Interrupted!")
@@ -67,10 +67,14 @@ class SpeakingHandler(StateHandler):
                     content=ctx.conversation_history[-1].content + " [interrupted]"
                 )
 
-            # Continue conversation (user wants to say something)
+            # Continue conversation with captured audio (user wants to say something)
+            # Pass the captured audio so we don't need to listen again
             return StateResult(
                 next_state=ConversationState.LISTENING,
-                data={"audio": None, "is_wake_word_trigger": False},
+                data={
+                    "audio": captured_audio,
+                    "is_wake_word_trigger": True,  # Strip wake word from transcription
+                },
             )
 
         # Check if we should continue the conversation

@@ -59,11 +59,17 @@ class ListeningHandler(StateHandler):
         """
         # If no audio provided (follow-up mode), listen for speech
         if self._audio is None:
+            # Play ready tone BEFORE waiting for speech so user knows Rex is listening
+            ctx.audio_manager.play_listening_tone()
             print("🎤 Listening for response...")
-            self._audio = self._listener.listen_for_speech(timeout=ctx.settings.listening_timeout)
+            self._audio = self._listener.listen_for_speech(
+                timeout=ctx.settings.listening_timeout, play_tones=True
+            )
 
             if self._audio is None:
                 print("⏱️ No response received, ending conversation.")
+                # Play done tone to indicate we're no longer listening
+                ctx.audio_manager.play_done_tone()
                 return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
         # Transcribe the audio

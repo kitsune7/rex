@@ -65,13 +65,23 @@ class AwaitingConfirmationHandler(StateHandler):
                 data={"response": "Something went wrong with the confirmation."},
             )
 
-        # Speak the confirmation prompt
+        # Speak the confirmation prompt - may be interrupted with captured audio
         print(f"\n🤖 Rex: {self._pending.confirmation_prompt}\n")
-        self._speaker.speak_interruptibly(self._pending.confirmation_prompt)
+        was_interrupted, captured_audio = self._speaker.speak_interruptibly(
+            self._pending.confirmation_prompt
+        )
 
-        # Listen for response
-        print("🎤 Listening for confirmation...")
-        audio = self._listener.listen_for_speech(timeout=CONFIRMATION_TIMEOUT)
+        # Use captured audio if interrupted, otherwise listen for response
+        if was_interrupted and captured_audio is not None and len(captured_audio) > 0:
+            print("🛑 Interrupted with response")
+            audio = captured_audio
+            # Strip wake word since this came from interruption
+            strip_wake_word = True
+        else:
+            # Listen for response
+            print("🎤 Listening for confirmation...")
+            audio = self._listener.listen_for_speech(timeout=CONFIRMATION_TIMEOUT)
+            strip_wake_word = False
 
         if audio is None:
             # No response - treat as rejection
@@ -83,7 +93,7 @@ class AwaitingConfirmationHandler(StateHandler):
                 data={"response": response, "force_end_conversation": True},
             )
 
-        transcription = self._transcriber.transcribe(audio)
+        transcription = self._transcriber.transcribe(audio, strip_wake_word=strip_wake_word)
         if not transcription:
             print("⏱️ Could not understand response, cancelling.")
             response, history = confirm_tool_call(self._pending, confirmed=False)

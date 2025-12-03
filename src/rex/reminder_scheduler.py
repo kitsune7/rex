@@ -4,20 +4,21 @@ Reminder scheduler for Rex voice assistant.
 Runs a background thread that wakes at the exact time reminders are due,
 rather than polling. Uses event-based notification to recalculate wake
 times when reminders are created, updated, or deleted.
+
+Routes audio through AudioManager to avoid race conditions.
 """
 
+from __future__ import annotations
+
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-import sounddevice as sd
-import soundfile as sf
-
 if TYPE_CHECKING:
     from agent.tools.reminder import Reminder, ReminderManager
+    from audio.manager import AudioManager
     from core.events import EventBus
     from rex.settings import ReminderSettings
 
@@ -44,6 +45,7 @@ class ReminderScheduler:
         reminder_manager: "ReminderManager | None" = None,
         reminder_settings: "ReminderSettings | None" = None,
         event_bus: "EventBus | None" = None,
+        audio_manager: "AudioManager | None" = None,
     ):
         """
         Initialize the reminder scheduler.
@@ -53,6 +55,7 @@ class ReminderScheduler:
             reminder_manager: ReminderManager instance (uses default if not provided)
             reminder_settings: ReminderSettings instance (uses default if not provided)
             event_bus: EventBus for schedule change notifications
+            audio_manager: AudioManager instance for audio output
         """
         # Import here to avoid circular imports and allow optional DI
         if reminder_manager is None:
@@ -64,6 +67,7 @@ class ReminderScheduler:
         self._reminder_settings = reminder_settings
         self._event_bus = event_bus
         self._on_reminder_due = on_reminder_due
+        self._audio_manager = audio_manager
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -73,13 +77,8 @@ class ReminderScheduler:
         self._delivery_lock = threading.Lock()
         self._delivery_event = threading.Event()
 
-        # Load ding sound
-        sound_path = Path("sounds/ding.mp3")
-        if sound_path.exists():
-            self._sound_data, self._sample_rate = sf.read(sound_path)
-        else:
-            self._sound_data = None
-            self._sample_rate = None
+        # Sound file path (loaded on demand by AudioManager)
+        self._ding_path = Path("sounds/ding.mp3")
 
     def _get_retry_minutes(self) -> int:
         """Get retry minutes from settings or default."""
@@ -251,14 +250,9 @@ class ReminderScheduler:
 
     def play_ding(self):
         """Play the ding sound to alert the user."""
-        if self._sound_data is not None:
+        if self._audio_manager is not None and self._ding_path.exists():
             try:
-                # Stop any ongoing audio first to avoid conflicts
-                sd.stop()
-                sd.play(self._sound_data, self._sample_rate)
-                # Wait for playback using sleep instead of sd.wait() to avoid threading issues
-                duration = len(self._sound_data) / self._sample_rate
-                time.sleep(duration + 0.1)  # Small buffer for safety
+                self._audio_manager.play_sound_file(self._ding_path, blocking=True)
             except Exception as e:
                 print(f"Warning: Could not play ding sound: {e}")
 

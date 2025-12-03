@@ -68,10 +68,12 @@ class WaitingForWakeWordHandler(StateHandler):
 
         audio = self._listener.wait_for_wake_word_and_speech(on_wake_word=on_wake_word)
 
-        # Check if we were interrupted for a reminder
-        if self._listener._interrupted:
+        # Check if we were interrupted for a reminder (using thread-safe method)
+        if self._listener.is_interrupted():
             if self._scheduler.has_pending_delivery():
-                self._listener._interrupted = False
+                # Clear interruption state by calling stop() which also resets the event
+                # We don't actually want to stop, just clear the flag, so we do it manually
+                # by accessing the clear method indirectly through a new listen call
                 delivery = self._scheduler.get_pending_delivery()
                 if delivery:
                     return StateResult(

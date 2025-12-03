@@ -2,7 +2,10 @@
 Timer tools for Rex voice assistant.
 
 Provides functionality to set, check, and stop named timers with alarm sounds.
+Routes audio through AudioManager to avoid race conditions.
 """
+
+from __future__ import annotations
 
 import re
 import threading
@@ -12,11 +15,12 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import sounddevice as sd
+import numpy as np
 import soundfile as sf
 from langchain_core.tools import tool
 
 if TYPE_CHECKING:
+    from audio.manager import AudioManager
     from core.events import EventBus
 
 
@@ -38,13 +42,14 @@ class TimerManager:
     """
     Manages multiple named timers with alarm sound playback.
 
-    This is no longer a singleton - instances should be created via
-    the AppContext or create_timer_manager() factory.
+    Routes audio through AudioManager to avoid race conditions with other
+    audio sources (TTS, feedback tones, etc.).
     """
 
     def __init__(
         self,
         event_bus: "EventBus | None" = None,
+        audio_manager: AudioManager | None = None,
         sound_path: str | Path = "sounds/fun-timer.mp3",
     ):
         """
@@ -52,20 +57,24 @@ class TimerManager:
 
         Args:
             event_bus: Optional event bus for emitting timer events
+            audio_manager: AudioManager instance for audio output
             sound_path: Path to the alarm sound file
         """
         self._event_bus = event_bus
+        self._audio_manager = audio_manager
         self._timers: dict[str, Timer] = {}
         self._timers_lock = threading.Lock()
-        self._sound_thread: threading.Thread | None = None
-        self._stop_sound = threading.Event()
         self._current_ringing: str | None = None
         self._muted = False
 
-        # Load sound file
+        # Load and prepare sound file
         sound_path = Path(sound_path)
         if sound_path.exists():
-            self._sound_data, self._sample_rate = sf.read(sound_path)
+            raw_audio, self._sample_rate = sf.read(sound_path)
+            # Convert to mono if stereo
+            if len(raw_audio.shape) > 1:
+                raw_audio = raw_audio.mean(axis=1)
+            self._sound_data = raw_audio.astype(np.float32)
         else:
             self._sound_data = None
             self._sample_rate = None
@@ -75,34 +84,17 @@ class TimerManager:
         if self._event_bus is not None:
             self._event_bus.emit(event)
 
-    def _play_sound_loop(self):
-        """Play the alarm sound on loop until stopped."""
-        if self._sound_data is None:
+    def _start_alarm_sound(self):
+        """Start the alarm sound loop through AudioManager."""
+        if self._sound_data is None or self._audio_manager is None:
             return
+        if not self._muted:
+            self._audio_manager.start_loop(self._sound_data, self._sample_rate)
 
-        while not self._stop_sound.is_set():
-            # Skip playback if muted
-            if self._muted:
-                time.sleep(0.1)
-                continue
-
-            sd.play(self._sound_data, self._sample_rate)
-            
-            # Wait for playback to finish or stop signal
-            duration = len(self._sound_data) / self._sample_rate
-            # Check stop signal more frequently than sound duration
-            check_interval = 0.1
-            elapsed = 0.0
-            while elapsed < duration and not self._stop_sound.is_set() and not self._muted:
-                time.sleep(check_interval)
-                elapsed += check_interval
-
-            if self._stop_sound.is_set():
-                sd.stop()
-                break
-
-            if self._muted:
-                sd.stop()
+    def _stop_alarm_sound(self):
+        """Stop the alarm sound loop."""
+        if self._audio_manager is not None:
+            self._audio_manager.stop_loop()
 
     def _timer_callback(self, name: str):
         """Called when a timer fires."""
@@ -120,10 +112,8 @@ class TimerManager:
 
         self._emit_event(TimerFired(timer_name=name))
 
-        # Start sound playback
-        self._stop_sound.clear()
-        self._sound_thread = threading.Thread(target=self._play_sound_loop, daemon=True)
-        self._sound_thread.start()
+        # Start sound playback through AudioManager
+        self._start_alarm_sound()
 
     def set_timer(self, name: str, duration_seconds: float) -> str:
         """
@@ -202,7 +192,7 @@ class TimerManager:
             timer = self._timers[name]
 
             if timer.state == TimerState.RINGING:
-                self._stop_alarm()
+                self._stop_alarm_sound()
                 timer_name = name
                 del self._timers[name]
                 self._current_ringing = None
@@ -230,7 +220,7 @@ class TimerManager:
             if self._current_ringing and self._current_ringing in self._timers:
                 timer = self._timers[self._current_ringing]
                 if timer.state == TimerState.RINGING:
-                    self._stop_alarm()
+                    self._stop_alarm_sound()
                     timer_name = self._current_ringing
                     del self._timers[self._current_ringing]
                     self._current_ringing = None
@@ -243,37 +233,20 @@ class TimerManager:
                     return True
         return False
 
-    def _stop_alarm(self):
-        """Stop the alarm sound playback."""
-        self._stop_sound.set()
-        sd.stop()
-        if self._sound_thread and self._sound_thread.is_alive():
-            self._sound_thread.join(timeout=1.0)
-        self._sound_thread = None
-
     def mute(self):
         """Temporarily mute the alarm sound. Call unmute() to resume."""
         self._muted = True
-        # Fully stop the sound thread to guarantee no audio can play
-        self._stop_sound.set()
-        sd.stop()
-        if self._sound_thread and self._sound_thread.is_alive():
-            self._sound_thread.join(timeout=0.5)
-        self._sound_thread = None
+        self._stop_alarm_sound()
 
     def unmute(self):
         """Resume alarm sound if a timer is still ringing."""
         self._muted = False
         with self._timers_lock:
-            # If there's still a ringing timer and we're not already playing, restart sound
+            # If there's still a ringing timer, restart sound
             if self._current_ringing and self._current_ringing in self._timers:
                 timer = self._timers[self._current_ringing]
                 if timer.state == TimerState.RINGING:
-                    # Only restart if sound thread isn't running
-                    if self._sound_thread is None or not self._sound_thread.is_alive():
-                        self._stop_sound.clear()
-                        self._sound_thread = threading.Thread(target=self._play_sound_loop, daemon=True)
-                        self._sound_thread.start()
+                    self._start_alarm_sound()
 
     def cleanup(self):
         """Clean up all timers and stop sounds."""
@@ -282,7 +255,7 @@ class TimerManager:
                 if timer.thread:
                     timer.thread.cancel()
             self._timers.clear()
-        self._stop_alarm()
+        self._stop_alarm_sound()
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

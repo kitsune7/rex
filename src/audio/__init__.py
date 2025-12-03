@@ -1,23 +1,22 @@
 """
 Audio management for Rex voice assistant.
 
-Provides unified audio I/O management, feedback tones,
-and priority handling for competing audio sources.
+Provides unified audio I/O management and feedback tones.
+All audio output goes through AudioManager to avoid race conditions.
 """
 
 from .feedback import (
     ThinkingTone,
-    init_audio_feedback,
-    play_done_tone,
-    play_listening_tone,
+    generate_done_tone,
+    generate_listening_tone,
+    generate_thinking_sequence,
 )
-from .manager import AudioManager, SoundPriority
+from .manager import AudioManager
 
 __all__ = [
     "AudioManager",
-    "SoundPriority",
-    "init_audio_feedback",
-    "play_listening_tone",
-    "play_done_tone",
     "ThinkingTone",
+    "generate_listening_tone",
+    "generate_done_tone",
+    "generate_thinking_sequence",
 ]

@@ -1,8 +1,19 @@
+"""
+Text-to-Speech synthesis using Kokoro.
+
+Routes all audio through AudioManager to avoid race conditions.
+"""
+
+from __future__ import annotations
+
 import warnings
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-import sounddevice as sd
 from kokoro import KPipeline
+
+if TYPE_CHECKING:
+    from audio.manager import AudioManager
 
 
 class KokoroVoice:
@@ -24,16 +35,35 @@ def load_voice(lang_code="a", voice="am_fenrir"):
     return KokoroVoice(lang_code, voice)
 
 
-def speak_text(text, voice_obj, interrupt_check: Callable[[], bool] | None = None) -> bool:
+def speak_text(
+    text: str,
+    voice_obj: KokoroVoice,
+    audio_manager: AudioManager,
+    interrupt_check: Callable[[], bool] | None = None,
+) -> bool:
+    """
+    Speak text using TTS, with optional interruption support.
+
+    Routes audio through AudioManager for coordinated playback.
+
+    Args:
+        text: Text to speak
+        voice_obj: KokoroVoice instance
+        audio_manager: AudioManager instance for audio output
+        interrupt_check: Optional callable returning True to interrupt
+
+    Returns:
+        True if interrupted, False if completed normally
+    """
     for chunk in voice_obj.synthesize(text):
         if interrupt_check is not None and interrupt_check():
-            sd.stop()
+            audio_manager.stop_current()
             return True
-        sd.play(chunk, samplerate=voice_obj.sample_rate, blocking=True)
-    sd.wait()
+
+        was_interrupted = audio_manager.queue_audio_blocking(
+            chunk, voice_obj.sample_rate, interrupt_check
+        )
+        if was_interrupted:
+            return True
+
     return False
-
-
-def stop_speaking():
-    """Immediately stop any currently playing speech."""
-    sd.stop()

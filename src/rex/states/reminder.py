@@ -100,14 +100,21 @@ class DeliveringReminderHandler(StateHandler):
         print("🔔 Reminder!")
         self._scheduler.play_ding()
 
-        # Speak the reminder
+        # Speak the reminder - may be interrupted with captured audio
         reminder_text = f"You have a reminder: {reminder.message}. Would you like to clear this reminder?"
         print(f"\n🤖 Rex: {reminder_text}\n")
-        self._speaker.speak_interruptibly(reminder_text)
+        was_interrupted, captured_audio = self._speaker.speak_interruptibly(reminder_text)
 
-        # Listen for response
-        print("🎤 Listening for response...")
-        audio = self._listener.listen_for_speech(timeout=REMINDER_RESPONSE_TIMEOUT)
+        # Use captured audio if interrupted, otherwise listen for response
+        if was_interrupted and captured_audio is not None and len(captured_audio) > 0:
+            print("🛑 Interrupted with response")
+            audio = captured_audio
+            strip_wake_word = True
+        else:
+            # Listen for response
+            print("🎤 Listening for response...")
+            audio = self._listener.listen_for_speech(timeout=REMINDER_RESPONSE_TIMEOUT)
+            strip_wake_word = False
 
         if audio is None:
             # No response - schedule retry
@@ -115,7 +122,7 @@ class DeliveringReminderHandler(StateHandler):
             self._scheduler.schedule_retry(reminder.id)
             return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
-        transcription = self._transcriber.transcribe(audio)
+        transcription = self._transcriber.transcribe(audio, strip_wake_word=strip_wake_word)
         if not transcription:
             print("⏱️ Could not understand response, will retry later.")
             self._scheduler.schedule_retry(reminder.id)
@@ -130,7 +137,7 @@ class DeliveringReminderHandler(StateHandler):
             self._scheduler.snooze_reminder(reminder.id, snooze_minutes)
             response = f"Okay, I'll remind you again in {snooze_minutes} minutes."
             print(f"\n🤖 Rex: {response}\n")
-            speak_text(response, self._voice)
+            speak_text(response, self._voice, ctx.audio_manager)
             return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
         # Check for clear/acknowledge
@@ -138,7 +145,7 @@ class DeliveringReminderHandler(StateHandler):
             self._scheduler.mark_delivered(reminder.id)
             response = "Reminder cleared."
             print(f"\n🤖 Rex: {response}\n")
-            speak_text(response, self._voice)
+            speak_text(response, self._voice, ctx.audio_manager)
             return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
         # Check for explicit rejection/snooze without time
@@ -147,7 +154,7 @@ class DeliveringReminderHandler(StateHandler):
             retry_mins = ctx.settings.reminders.retry_minutes if ctx.settings else 10
             response = f"Okay, I'll remind you again in {retry_mins} minutes."
             print(f"\n🤖 Rex: {response}\n")
-            speak_text(response, self._voice)
+            speak_text(response, self._voice, ctx.audio_manager)
             return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
         # Unclear response - retry later
