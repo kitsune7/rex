@@ -15,6 +15,8 @@ A wake word detection system with speech recognition capabilities.
    uv run python -c "from openwakeword.utils import download_models; download_models()"
    ```
 
+3. Run `brew install espeak-ng` to get text to speech working.
+
 ## Usage
 
 ### Test a pre-trained wake word model:
