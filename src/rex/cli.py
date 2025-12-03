@@ -62,7 +62,6 @@ def main():
     state_machine = StateMachine(ctx, handlers)
 
     print("\n✅ Rex is ready!")
-    print(f"🎤 Listening for wake word '{ctx.settings.wake_word.display_name}'...")
     print("   Press Ctrl+C to exit\n")
 
     try:

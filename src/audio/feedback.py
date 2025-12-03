@@ -109,22 +109,17 @@ class ThinkingTone:
         tone1 = _generate_tone(D4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
         gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
         tone2 = _generate_tone(A4, THINKING_NOTE_DURATION, volume=THINKING_VOLUME)
-        return np.concatenate([tone1, gap, tone2])
+        trailing_gap = np.zeros(int(SAMPLE_RATE * THINKING_GAP_DURATION), dtype=np.float32)
+        return np.concatenate([tone1, gap, tone2, trailing_gap])
 
     def _play_loop(self):
         """Play the thinking tone on loop until stopped."""
         audio = self._generate_thinking_sequence()
-        duration = len(audio) / SAMPLE_RATE
 
         while not self._stop_event.is_set():
             try:
                 sd.play(audio, SAMPLE_RATE)
-                # Check stop signal frequently during playback
-                elapsed = 0.0
-                check_interval = 0.05
-                while elapsed < duration and not self._stop_event.is_set():
-                    self._stop_event.wait(timeout=check_interval)
-                    elapsed += check_interval
+                sd.wait()  # Proper sync - no overlap
             except Exception:
                 pass  # Silently ignore audio errors
 
@@ -137,7 +132,7 @@ class ThinkingTone:
     def stop(self):
         """Stop the thinking tone."""
         self._stop_event.set()
-        sd.stop()
+        # Don't call sd.stop() - let current sequence finish to avoid pop
         if self._thread is not None:
-            self._thread.join(timeout=0.5)
+            self._thread.join(timeout=1.0)  # Allow time for sequence to complete
             self._thread = None
