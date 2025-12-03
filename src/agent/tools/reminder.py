@@ -439,23 +439,11 @@ def _create_reminder_impl(message: str, datetime_str: str) -> str:
 
 @tool
 def create_reminder(message: str, datetime_str: str) -> str:
-    """
-    Create a reminder for a specific date and time.
-
-    IMPORTANT: This tool requires user confirmation before the reminder is actually created.
-    The system will ask the user to confirm the reminder details.
+    """Create a reminder. Requires user confirmation.
 
     Args:
-        message: What to remind the user about (e.g., "take out the trash", "call mom")
-        datetime_str: When to remind them (e.g., "tomorrow at 3pm", "next Tuesday at noon", "December 25th at 9am")
-
-    Returns:
-        Confirmation message with reminder details, or error message if datetime couldn't be parsed.
-
-    Examples:
-        - create_reminder("take out the trash", "tomorrow at 7am")
-        - create_reminder("call mom", "next Sunday at 2pm")
-        - create_reminder("dentist appointment", "January 15th at 10am")
+        message: What to remind about
+        datetime_str: When (e.g. "3pm", "tomorrow at noon"). If only time given, assume today unless already passed.
     """
     return _create_reminder_impl(message, datetime_str)
 
@@ -488,21 +476,12 @@ def list_reminders() -> str:
 
 @tool
 def update_reminder(reminder_id: int, new_message: str | None = None, new_datetime_str: str | None = None) -> str:
-    """
-    Update an existing reminder's message and/or time.
+    """Update a reminder's message and/or time.
 
     Args:
-        reminder_id: The ID of the reminder to update (use list_reminders to see IDs)
-        new_message: New message for the reminder (optional)
-        new_datetime_str: New date/time for the reminder (optional, e.g., "tomorrow at 5pm")
-
-    Returns:
-        Confirmation message or error if the reminder wasn't found.
-
-    Examples:
-        - update_reminder(1, new_message="pick up groceries")
-        - update_reminder(2, new_datetime_str="next Monday at 9am")
-        - update_reminder(3, new_message="call dentist", new_datetime_str="Friday at 2pm")
+        reminder_id: ID from list_reminders
+        new_message: New message (optional)
+        new_datetime_str: New time (optional)
     """
     reminder = get_reminder_manager().get_reminder(reminder_id)
     if reminder is None:
@@ -537,19 +516,7 @@ def update_reminder(reminder_id: int, new_message: str | None = None, new_dateti
 
 @tool
 def delete_reminder(reminder_id: int) -> str:
-    """
-    Delete a reminder.
-
-    Args:
-        reminder_id: The ID of the reminder to delete (use list_reminders to see IDs)
-
-    Returns:
-        Confirmation message or error if the reminder wasn't found.
-
-    Examples:
-        - delete_reminder(1)
-        - delete_reminder(5)
-    """
+    """Delete a reminder by ID."""
     success = get_reminder_manager().delete_reminder(reminder_id)
     if success:
         return f"Reminder {reminder_id} has been deleted."

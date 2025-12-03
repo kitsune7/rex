@@ -380,20 +380,11 @@ def get_timer_manager() -> TimerManager:
 
 @tool
 def set_timer(duration: str, name: str = "timer") -> str:
-    """
-    Set a timer for a specified duration.
+    """Set a timer.
 
     Args:
-        duration: How long to set the timer for (e.g., "5 minutes", "30 seconds", "1 hour 30 minutes")
-        name: Optional name for the timer (e.g., "pizza timer", "tea timer"). Defaults to "timer".
-
-    Returns:
-        Confirmation message with timer details.
-
-    Examples:
-        - set_timer("5 minutes") - sets a 5 minute timer
-        - set_timer("30 seconds", "egg timer") - sets a 30 second timer named "egg timer"
-        - set_timer("1 hour 30 minutes", "meeting") - sets a 90 minute timer named "meeting"
+        duration: e.g. "5 minutes", "30 seconds", "1 hour 30 minutes"
+        name: Optional timer name (default: "timer")
     """
     seconds = parse_duration(duration)
     if seconds is None:
@@ -418,17 +409,5 @@ def check_timers() -> str:
 
 @tool
 def stop_timer(name: str | None = None) -> str:
-    """
-    Stop a ringing timer alarm or cancel a pending timer.
-
-    Args:
-        name: The name of the timer to stop. If not provided, stops the currently ringing alarm.
-
-    Returns:
-        Confirmation message.
-
-    Examples:
-        - stop_timer() - stops the currently ringing alarm
-        - stop_timer("pizza timer") - stops or cancels the pizza timer
-    """
+    """Stop a ringing alarm or cancel a timer. If name is omitted, stops the current alarm."""
     return get_timer_manager().stop_timer(name)

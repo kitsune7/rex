@@ -3,22 +3,7 @@ from langchain_core.tools import tool
 
 @tool
 def calculate(expression: str) -> str:
-    """Evaluate a mathematical expression and return the result.
-
-    This tool can handle basic arithmetic operations (+, -, *, /),
-    exponentiation (**), and common math functions like sqrt, sin, cos, etc.
-
-    Args:
-        expression: A mathematical expression as a string (e.g., "2 + 2", "sqrt(16)", "3 ** 2")
-
-    Returns:
-        The result of the calculation as a string
-
-    Examples:
-        - "2 + 2" returns "4"
-        - "10 * 5" returns "50"
-        - "sqrt(16)" returns "4.0"
-    """
+    """Evaluate a math expression. Supports +, -, *, /, **, sqrt, sin, cos, tan, log, exp, pi, e."""
     import math
 
     try:
