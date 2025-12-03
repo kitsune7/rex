@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from core.state_machine import ConversationState, StateHandler, StateResult
 from tts import speak_text
 
+from .phrases import is_confirmation, is_rejection
+
 if TYPE_CHECKING:
     from core.context import AppContext
     from rex.reminder_scheduler import ReminderDelivery, ReminderScheduler
@@ -19,22 +21,6 @@ if TYPE_CHECKING:
 
 # Timeout for reminder responses
 REMINDER_RESPONSE_TIMEOUT = 5.0
-
-# Confirmation phrases for clearing reminders
-CONFIRM_PHRASES = ("yes", "yeah", "yep", "sure", "okay", "ok", "clear", "done", "got it")
-REJECT_PHRASES = ("no", "nope", "cancel", "nevermind", "never mind", "don't", "stop")
-
-
-def _is_confirmation(text: str) -> bool:
-    """Check if text is a confirmation."""
-    normalized = text.strip().lower()
-    return any(phrase in normalized for phrase in CONFIRM_PHRASES)
-
-
-def _is_rejection(text: str) -> bool:
-    """Check if text is a rejection."""
-    normalized = text.strip().lower()
-    return any(phrase in normalized for phrase in REJECT_PHRASES)
 
 
 def _parse_snooze_duration(text: str) -> int | None:
@@ -148,7 +134,7 @@ class DeliveringReminderHandler(StateHandler):
             return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
         # Check for clear/acknowledge
-        if _is_confirmation(transcription) or "clear" in normalized or "done" in normalized or "got it" in normalized:
+        if is_confirmation(transcription):
             self._scheduler.mark_delivered(reminder.id)
             response = "Reminder cleared."
             print(f"\n🤖 Rex: {response}\n")
@@ -156,7 +142,7 @@ class DeliveringReminderHandler(StateHandler):
             return StateResult(next_state=ConversationState.WAITING_FOR_WAKE_WORD)
 
         # Check for explicit rejection/snooze without time
-        if _is_rejection(transcription) or "later" in normalized or "not now" in normalized:
+        if is_rejection(transcription) or "later" in normalized or "not now" in normalized:
             self._scheduler.schedule_retry(reminder.id)
             retry_mins = ctx.settings.reminders.retry_minutes if ctx.settings else 10
             response = f"Okay, I'll remind you again in {retry_mins} minutes."

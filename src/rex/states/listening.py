@@ -70,10 +70,6 @@ class ListeningHandler(StateHandler):
         strip_wake_word = self._is_wake_word_trigger
         transcription = self._transcriber.transcribe(self._audio, strip_wake_word=strip_wake_word)
 
-        # Unmute timer after transcription
-        if ctx.timer_manager:
-            ctx.timer_manager.unmute()
-
         if not transcription:
             # Empty transcription - go back to appropriate state
             if ctx.is_in_conversation():

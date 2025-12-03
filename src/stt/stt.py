@@ -35,7 +35,6 @@ class Transcriber:
         segments, _ = self._model.transcribe(
             audio_float,
             language="en",
-            beam_size=5,  # This is already the default but it's kept for clarity
             vad_filter=True,
         )
 

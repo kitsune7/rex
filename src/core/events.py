@@ -2,7 +2,7 @@
 Event bus for decoupled communication between Rex components.
 
 Events allow components to communicate without direct dependencies.
-For example, the reminder scheduler can emit ReminderDue events
+For example, the reminder scheduler can emit ReminderScheduleChanged events
 without knowing about the CLI or conversation state.
 """
 
@@ -11,8 +11,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
-
-import numpy as np
 
 
 # Base event class
@@ -23,131 +21,7 @@ class Event:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
-# Wake word events
-@dataclass
-class WakeWordDetected(Event):
-    """Fired when wake word is detected."""
-
-    confidence: float = 0.0
-
-
-@dataclass
-class WakeWordInterrupt(Event):
-    """Fired when wake word interrupts ongoing speech."""
-
-    pass
-
-
-# Audio capture events
-@dataclass
-class SpeechCaptureStarted(Event):
-    """Fired when speech capture begins."""
-
-    pass
-
-
-@dataclass
-class SpeechCaptureComplete(Event):
-    """Fired when speech capture ends with audio data."""
-
-    audio: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int16))
-    duration_seconds: float = 0.0
-
-
-@dataclass
-class SpeechCaptureTimeout(Event):
-    """Fired when speech capture times out without speech."""
-
-    pass
-
-
-# Transcription events
-@dataclass
-class TranscriptionComplete(Event):
-    """Fired when speech-to-text completes."""
-
-    text: str = ""
-    is_wake_word_stripped: bool = False
-
-
-# Agent events
-@dataclass
-class AgentProcessingStarted(Event):
-    """Fired when agent starts processing a query."""
-
-    query: str = ""
-
-
-@dataclass
-class AgentResponseReady(Event):
-    """Fired when agent has a response ready."""
-
-    response: str = ""
-    needs_confirmation: bool = False
-
-
-@dataclass
-class ConfirmationRequired(Event):
-    """Fired when a tool call requires user confirmation."""
-
-    tool_name: str = ""
-    tool_args: dict = field(default_factory=dict)
-    prompt: str = ""
-
-
-@dataclass
-class ConfirmationReceived(Event):
-    """Fired when user responds to confirmation request."""
-
-    confirmed: bool = False
-
-
-# TTS events
-@dataclass
-class SpeechStarted(Event):
-    """Fired when TTS playback begins."""
-
-    text: str = ""
-
-
-@dataclass
-class SpeechComplete(Event):
-    """Fired when TTS playback ends normally."""
-
-    pass
-
-
-@dataclass
-class SpeechInterrupted(Event):
-    """Fired when TTS playback is interrupted."""
-
-    pass
-
-
 # Reminder events
-@dataclass
-class ReminderDue(Event):
-    """Fired when a reminder is due for delivery."""
-
-    reminder_id: int = 0
-    message: str = ""
-
-
-@dataclass
-class ReminderDelivered(Event):
-    """Fired when user acknowledges a reminder."""
-
-    reminder_id: int = 0
-
-
-@dataclass
-class ReminderSnoozed(Event):
-    """Fired when user snoozes a reminder."""
-
-    reminder_id: int = 0
-    snooze_minutes: int = 0
-
-
 @dataclass
 class ReminderScheduleChanged(Event):
     """Fired when reminders are created, updated, or deleted.
@@ -171,22 +45,6 @@ class TimerStopped(Event):
     """Fired when a timer alarm is stopped."""
 
     timer_name: str = ""
-
-
-# Special command events
-@dataclass
-class StopCommand(Event):
-    """Fired when user says stop/nevermind."""
-
-    pass
-
-
-# System events
-@dataclass
-class ShutdownRequested(Event):
-    """Fired when system shutdown is requested."""
-
-    pass
 
 
 class EventBus:

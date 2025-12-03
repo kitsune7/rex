@@ -24,13 +24,8 @@ class SpeakingHandler(StateHandler):
     whether the response ends with a question.
     """
 
-    def __init__(
-        self,
-        speaker: "InterruptibleSpeaker",
-        voice,
-    ):
+    def __init__(self, speaker: "InterruptibleSpeaker"):
         self._speaker = speaker
-        self._voice = voice
         self._response = ""
         self._force_end_conversation = False
 

@@ -1,7 +1,6 @@
 from .math import calculate
 from .reminder import (
     CONFIRMABLE_TOOLS,
-    REQUIRES_CONFIRMATION,
     Reminder,
     ReminderManager,
     ReminderStatus,
@@ -47,7 +46,6 @@ __all__ = [
     "ReminderManager",
     "ReminderStatus",
     "Reminder",
-    "REQUIRES_CONFIRMATION",
     "CONFIRMABLE_TOOLS",
     "tool_requires_confirmation",
 ]

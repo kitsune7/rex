@@ -87,6 +87,7 @@ class TimerManager:
                 continue
 
             sd.play(self._sound_data, self._sample_rate)
+            
             # Wait for playback to finish or stop signal
             duration = len(self._sound_data) / self._sample_rate
             # Check stop signal more frequently than sound duration
@@ -253,7 +254,12 @@ class TimerManager:
     def mute(self):
         """Temporarily mute the alarm sound. Call unmute() to resume."""
         self._muted = True
+        # Fully stop the sound thread to guarantee no audio can play
+        self._stop_sound.set()
         sd.stop()
+        if self._sound_thread and self._sound_thread.is_alive():
+            self._sound_thread.join(timeout=0.5)
+        self._sound_thread = None
 
     def unmute(self):
         """Resume alarm sound if a timer is still ringing."""

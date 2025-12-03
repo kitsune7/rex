@@ -403,9 +403,6 @@ def get_reminder_manager() -> ReminderManager:
     return _reminder_manager
 
 
-# Tool metadata for confirmation requirement
-REQUIRES_CONFIRMATION = "requires_confirmation"
-
 # Set of tool names that require confirmation
 CONFIRMABLE_TOOLS = {"create_reminder"}
 

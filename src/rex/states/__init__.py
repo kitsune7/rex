@@ -47,7 +47,7 @@ def create_all_handlers(
         WaitingForWakeWordHandler(listener=listener, scheduler=scheduler),
         ListeningHandler(listener=listener, transcriber=transcriber),
         ProcessingHandler(),
-        SpeakingHandler(speaker=speaker, voice=voice),
+        SpeakingHandler(speaker=speaker),
         AwaitingConfirmationHandler(listener=listener, transcriber=transcriber, speaker=speaker),
         DeliveringReminderHandler(
             listener=listener,

@@ -272,7 +272,6 @@ class AudioManager:
         path: str | Path,
         priority: SoundPriority = SoundPriority.NORMAL,
         blocking: bool = False,
-        loop: bool = False,
     ) -> bool:
         """
         Play a sound file with optional caching.
@@ -281,7 +280,6 @@ class AudioManager:
             path: Path to the audio file
             priority: Priority level for this sound
             blocking: If True, wait for playback to complete
-            loop: If True, loop the sound (blocking must be False)
 
         Returns:
             True if sound was played, False if muted or file not found
@@ -301,10 +299,6 @@ class AudioManager:
             except Exception as e:
                 print(f"Error loading sound file {path}: {e}")
                 return False
-
-        if loop:
-            # Looping requires special handling - caller manages the loop
-            return self.play_sound(audio, sample_rate, priority, blocking=False)
 
         return self.play_sound(audio, sample_rate, priority, blocking)
 

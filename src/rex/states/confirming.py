@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from agent import PendingConfirmation, confirm_tool_call
 from core.state_machine import ConversationState, StateHandler, StateResult
 
+from .phrases import is_confirmation
+
 if TYPE_CHECKING:
     from core.context import AppContext
     from stt import Transcriber
@@ -18,15 +20,6 @@ if TYPE_CHECKING:
 
 # Timeout for confirmation responses
 CONFIRMATION_TIMEOUT = 10.0
-
-# Confirmation phrases
-CONFIRM_PHRASES = ("yes", "yeah", "yep", "sure", "okay", "ok", "confirm", "do it", "go ahead", "proceed")
-
-
-def _is_confirmation(text: str) -> bool:
-    """Check if text is a confirmation."""
-    normalized = text.strip().lower()
-    return any(phrase in normalized for phrase in CONFIRM_PHRASES)
 
 
 class AwaitingConfirmationHandler(StateHandler):
@@ -102,7 +95,7 @@ class AwaitingConfirmationHandler(StateHandler):
 
         print(f"\n💬 You said: {transcription}\n")
 
-        if _is_confirmation(transcription):
+        if is_confirmation(transcription):
             print("✅ Confirmed!")
             response, history = confirm_tool_call(self._pending, confirmed=True)
         else:

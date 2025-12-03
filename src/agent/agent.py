@@ -257,10 +257,7 @@ def confirm_tool_call(
         # Don't invoke the agent here - just return the cancellation
         # The caller will continue the conversation if needed, which will
         # trigger a fresh agent invocation through run_voice_agent
-        text_response = None
-
-        if not text_response or text_response == "[No response generated]":
-            text_response = "Okay, I've cancelled that action."
+        text_response = "Okay, I've cancelled that action."
 
     # Get updated history from state
     final_state = agent.get_state(config)
