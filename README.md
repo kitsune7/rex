@@ -15,7 +15,7 @@ A wake word detection system with speech recognition capabilities.
    uv run python -c "from openwakeword.utils import download_models; download_models()"
    ```
 
-3. Run `brew install espeak-ng` to get text to speech working.
+3. Run `brew install espeak-ng portaudio` to get everything working.
 
 ## Usage
 
