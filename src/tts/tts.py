@@ -10,6 +10,7 @@ import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import torch
 from kokoro import KPipeline
 
 if TYPE_CHECKING:
@@ -23,6 +24,8 @@ class KokoroVoice:
             warnings.filterwarnings("ignore", category=UserWarning, module="torch")
             warnings.filterwarnings("ignore", category=FutureWarning, module="torch")
             self.pipeline = KPipeline(lang_code=lang_code, repo_id="hexgrad/Kokoro-82M")
+            if torch.backends.mps.is_available():
+                self.pipeline.model = self.pipeline.model.to("mps")
         self.sample_rate = 24000
 
     def synthesize(self, text):
