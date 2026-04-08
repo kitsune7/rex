@@ -9,6 +9,8 @@ require (
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/joho/godotenv v1.5.1
 	github.com/pelletier/go-toml/v2 v2.2.2
+	github.com/Knetic/govaluate v3.0.0+incompatible
+	github.com/mattn/go-sqlite3 v1.14.22
 )
 
 require github.com/go-audio/riff v1.0.0 // indirect
