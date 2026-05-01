@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "faster-whisper>=1.0.0",
-  "kokoro>=0.9.4",
   "langchain>=1.0.8",
   "langchain-openai>=1.0.3",
   "langfuse>=3.10.1",
@@ -24,6 +23,7 @@ dependencies = [
   "soundfile>=0.13.1",
   "torch>=2.9.1",
   "torchaudio>=2.9.1",
+  "vibevoice[streamingtts]",
 ]
 
 [project.scripts]
@@ -56,3 +56,6 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
+
+[tool.uv.sources]
+vibevoice = { git = "https://github.com/microsoft/VibeVoice.git" }

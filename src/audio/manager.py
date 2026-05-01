@@ -30,7 +30,7 @@ class AudioConfig:
     # Sample rates
     INPUT_SAMPLE_RATE: int = 16000  # For STT (Whisper expects 16kHz)
     OUTPUT_SAMPLE_RATE: int = 44100  # Unified output sample rate
-    TTS_SAMPLE_RATE: int = 24000  # Kokoro TTS native rate
+    TTS_SAMPLE_RATE: int = 24000  # VibeVoice TTS native rate
 
     # Input settings
     INPUT_CHANNELS: int = 1

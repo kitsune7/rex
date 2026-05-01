@@ -14,7 +14,7 @@ import numpy as np
 
 from wake_word import WakeWordMonitor
 
-from .tts import KokoroVoice, speak_text
+from .tts import VibeVoiceVoice, speak_text
 
 if TYPE_CHECKING:
     from audio.manager import AudioManager
@@ -31,7 +31,7 @@ class InterruptibleSpeaker:
 
     def __init__(
         self,
-        voice: KokoroVoice,
+        voice: VibeVoiceVoice,
         audio_manager: AudioManager,
         model_path: str,
         threshold: float = 0.5,
@@ -40,7 +40,7 @@ class InterruptibleSpeaker:
         Initialize the interruptible speaker.
 
         Args:
-            voice: KokoroVoice instance for TTS synthesis.
+            voice: VibeVoiceVoice instance for TTS synthesis.
             audio_manager: AudioManager instance for audio output.
             model_path: Path to the wake word .onnx model file.
             threshold: Wake word detection threshold (0.0 to 1.0).
