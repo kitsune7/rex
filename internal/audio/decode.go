@@ -58,7 +58,7 @@ func intBufferToFloat32(buf *audio.IntBuffer, numChannels, bitDepth int) []float
 	numFrames := len(data) / numChannels
 
 	samples := make([]float32, numFrames)
-	maxVal := float32(1<<(bitDepth-1) - 1)
+	maxVal := float32((int(1) << (bitDepth - 1)) - 1)
 
 	if numChannels == 1 {
 		for i := 0; i < numFrames; i++ {

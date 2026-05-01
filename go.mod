@@ -11,4 +11,8 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.2
 )
 
-require github.com/go-audio/riff v1.0.0 // indirect
+require (
+	github.com/go-audio/riff v1.0.0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.44 // indirect
+	github.com/yalue/onnxruntime_go v1.30.0 // indirect
+)
