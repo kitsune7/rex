@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "faster-whisper>=1.0.0",
+  "fastapi>=0.115.0",
   "kokoro>=0.9.4",
   "langchain>=1.0.8",
   "langchain-openai>=1.0.3",
@@ -18,16 +19,20 @@ dependencies = [
   "pyaudio>=0.2.14",
   "python-dateutil>=2.8.2",
   "python-dotenv>=1.0.0",
+  "python-multipart>=0.0.20",
   "scipy>=1.16.3",
   "silero-vad>=5.1",
   "sounddevice>=0.5.3",
   "soundfile>=0.13.1",
   "torch>=2.9.1",
   "torchaudio>=2.9.1",
+  "uvicorn[standard]>=0.32.0",
+  "websockets>=13.0",
 ]
 
 [project.scripts]
 rex = "rex.cli:main"
+rex-server = "server.cli:main"
 wake_word = "wake_word.cli:main"
 
 [build-system]
@@ -40,6 +45,7 @@ packages = [
   "src/audio",
   "src/core",
   "src/rex",
+  "src/server",
   "src/stt",
   "src/tts",
   "src/wake_word",

@@ -1,3 +1,5 @@
 # Minutes to wait before retrying an undelivered reminder
 retry_minutes = 10
 
+[llm]
+api_base = "http://localhost:2345/v1"

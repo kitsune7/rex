@@ -6,6 +6,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import SecretStr
 
+from rex.settings import load_settings
+
 from .tools.reminder import CONFIRMABLE_TOOLS
 
 load_dotenv()
@@ -13,9 +15,20 @@ load_dotenv()
 
 def get_system_prompt() -> str:
     """Get the system prompt for the agent."""
-    return f"""IMPORTANT: Your response will be spoken aloud. NEVER use markdown, asterisks, bullet points, or any formatting. Write naturally as if speaking.
+    return f"""You are Rex, a voice assistant. Your replies are spoken aloud.
+Answer in one sentence. Use two or three only if truly needed.
+Lead with the answer. No preamble, no repeating the question.
+Speak plainly — no lists, markdown, code, or URLs unless asked.
+If the full answer is long, give the key point, then offer more.
 
-You are Rex, a voice assistant. Today is {date.today()}. Be concise.
+Examples:
+User: Do you like foxes?
+Rex: Yeah, they're cute!
+
+User: What's a tensor in machine learning?
+Rex: It's a scalar, vector, or matrix slash multi-dimensional array.
+
+Today is {date.today()}.
 """
 
 
@@ -35,8 +48,9 @@ def create_agent(tools, checkpointer=None):
     Returns:
         A compiled LangGraph agent
     """
+    settings = load_settings()
     llm = ChatOpenAI(
-        openai_api_base="http://localhost:1234/v1",
+        openai_api_base=settings.llm.api_base,
         api_key=SecretStr("not-needed"),
         temperature=0.7,
     )

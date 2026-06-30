@@ -25,11 +25,19 @@ class WakeWordSettings:
 
 
 @dataclass
+class LLMSettings:
+    """Settings related to LLM inference."""
+
+    api_base: str = "http://localhost:1234/v1"
+
+
+@dataclass
 class Settings:
     """Application settings loaded from settings.toml."""
 
     reminders: ReminderSettings
     wake_word: WakeWordSettings
+    llm: LLMSettings
     listening_timeout: float = 6.0  # Seconds to wait for a follow-up response
 
 
@@ -63,11 +71,17 @@ def load_settings(settings_path: str | Path = "settings.toml") -> Settings:
         display_name=wake_word_data.get("display_name", "Hey Rex"),
     )
 
+    llm_data = data.get("llm", {})
+    llm_settings = LLMSettings(
+        api_base=llm_data.get("api_base", "http://localhost:1234/v1"),
+    )
+
     listening_timeout_data = data.get("listening_timeout", 6.0)
 
     return Settings(
         reminders=reminder_settings,
         wake_word=wake_word_settings,
+        llm=llm_settings,
         listening_timeout=listening_timeout_data,
     )
 
