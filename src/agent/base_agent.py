@@ -2,12 +2,9 @@ from datetime import date
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent as create_langchain_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from pydantic import SecretStr
 
-from rex.settings import load_settings
-
+from .rescue_parsing import create_chat_model
 from .tools.reminder import CONFIRMABLE_TOOLS
 
 load_dotenv()
@@ -48,13 +45,7 @@ def create_agent(tools, checkpointer=None):
     Returns:
         A compiled LangGraph agent
     """
-    settings = load_settings()
-    llm = ChatOpenAI(
-        model=settings.llm.model,
-        openai_api_base=settings.llm.api_base,
-        api_key=SecretStr("not-needed"),
-        temperature=0.7,
-    )
+    llm = create_chat_model()
 
     # If any tools require confirmation, interrupt before the "tools" node
     # We'll check which specific tool is being called at runtime

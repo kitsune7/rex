@@ -267,8 +267,9 @@ def confirm_tool_call(
                 messages.append(cancel_msg)
                 break
 
-        # Update state with the cancellation and continue
-        agent.update_state(config, {"messages": messages})
+        # Graph is paused at the tools node (interrupt_before=["tools"]).
+        # Must update as that node so LangGraph can route to the model next.
+        agent.update_state(config, {"messages": messages}, as_node="tools")
 
         # Don't invoke the agent here - just return the cancellation
         # The caller will continue the conversation if needed, which will

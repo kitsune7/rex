@@ -18,10 +18,10 @@ from datetime import date
 
 from langchain.agents import create_agent as create_lc_agent
 from langchain_core.messages import HumanMessage, ToolMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
-from pydantic import SecretStr
+
+from agent.rescue_parsing import create_chat_model
 
 from agent.tools import (
     ReminderManager,
@@ -33,8 +33,6 @@ from agent.tools import (
     tool_requires_confirmation,
 )
 from agent.tools.reminder import CONFIRMABLE_TOOLS
-from rex.settings import load_settings
-
 from .emotion import EMOTION_SYSTEM_PROMPT_SUFFIX, parse_emotion
 
 log = logging.getLogger(__name__)
@@ -129,15 +127,7 @@ class VoiceAgent:
         ]
         self._checkpointer = MemorySaver()
 
-        # Reach into the same factory the desktop uses but swap the system
-        # prompt. We rebuild the LLM here to keep it explicit.
-        settings = load_settings()
-        llm = ChatOpenAI(
-            model=settings.llm.model,
-            openai_api_base=settings.llm.api_base,
-            api_key=SecretStr("not-needed"),
-            temperature=0.7,
-        )
+        llm = create_chat_model()
         use_interrupt = any(t.name in CONFIRMABLE_TOOLS for t in tools)
 
         self._agent = create_lc_agent(
@@ -216,7 +206,9 @@ class VoiceAgent:
                             ToolMessage(content=content, tool_call_id=tool_call["id"])
                         )
                         break
-                self._agent.update_state(config, {"messages": messages})
+                self._agent.update_state(
+                    config, {"messages": messages}, as_node="tools"
+                )
                 # Drive forward so the LLM acknowledges the cancellation.
                 response = self._agent.invoke(None, config=config)
 

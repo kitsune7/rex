@@ -1,6 +1,13 @@
-"""Tests for agent response extraction."""
+"""Tests for agent response extraction and confirmation flow."""
 
-from agent.agent import extract_text_response
+from langchain.agents import create_agent as lc_create_agent
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import MemorySaver
+
+from agent import agent as agent_module
+from agent.agent import PendingConfirmation, confirm_tool_call, extract_text_response
 
 
 class TestExtractTextResponse:
@@ -56,3 +63,71 @@ class TestExtractTextResponse:
             ]
         }
         assert extract_text_response(response) == "Last message"
+
+
+class TestConfirmToolCall:
+    def test_cancel_does_not_raise_when_graph_paused_at_tools(self, monkeypatch):
+        """Cancelling a confirmable tool must update state from the tools node."""
+
+        @tool
+        def create_reminder(message: str, datetime_str: str) -> str:
+            """Create a reminder."""
+            return "created"
+
+        class FakeModel(GenericFakeChatModel):
+            def bind_tools(self, tools, **kwargs):
+                return self
+
+        llm = FakeModel(
+            messages=iter(
+                [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "create_reminder",
+                                "args": {
+                                    "message": "call mom",
+                                    "datetime_str": "tomorrow at 3pm",
+                                },
+                                "id": "call_test",
+                                "type": "tool_call",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        checkpointer = MemorySaver()
+        fake_agent = lc_create_agent(
+            llm,
+            [create_reminder],
+            system_prompt="You are Rex.",
+            checkpointer=checkpointer,
+            interrupt_before=["tools"],
+        )
+        monkeypatch.setattr(agent_module, "_agent", fake_agent)
+        monkeypatch.setattr(agent_module, "_checkpointer", checkpointer)
+
+        thread_id = "test-cancel-thread"
+        config = {"configurable": {"thread_id": thread_id}, "callbacks": []}
+        fake_agent.invoke(
+            {"messages": [HumanMessage(content="Remind me to call mom tomorrow at 3pm")]},
+            config=config,
+        )
+
+        pending = PendingConfirmation(
+            tool_name="create_reminder",
+            tool_args={"message": "call mom", "datetime_str": "tomorrow at 3pm"},
+            confirmation_prompt="Should I proceed?",
+            thread_id=thread_id,
+        )
+
+        response, history = confirm_tool_call(pending, confirmed=False)
+
+        assert response == "Okay, I've cancelled that action."
+        assert any(
+            isinstance(message, ToolMessage) and "cancelled" in message.content.lower()
+            for message in history
+        )
