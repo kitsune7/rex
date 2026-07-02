@@ -10,12 +10,11 @@ keeps working unchanged.
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from dataclasses import dataclass
 from datetime import date
-
-import logging
 
 from langchain.agents import create_agent as create_lc_agent
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -23,7 +22,20 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from pydantic import SecretStr
+
+from agent.tools import (
+    ReminderManager,
+    TimerManager,
+    calculate,
+    create_reminder_tools,
+    create_timer_tools,
+    get_current_time,
+    tool_requires_confirmation,
+)
+from agent.tools.reminder import CONFIRMABLE_TOOLS
 from rex.settings import load_settings
+
+from .emotion import EMOTION_SYSTEM_PROMPT_SUFFIX, parse_emotion
 
 log = logging.getLogger(__name__)
 
@@ -51,19 +63,6 @@ def _safe_callback_handler():
             exc_info=True,
         )
         return None
-
-from agent.tools import (
-    ReminderManager,
-    TimerManager,
-    calculate,
-    create_reminder_tools,
-    create_timer_tools,
-    get_current_time,
-    tool_requires_confirmation,
-)
-from agent.tools.reminder import CONFIRMABLE_TOOLS
-
-from .emotion import EMOTION_SYSTEM_PROMPT_SUFFIX, parse_emotion
 
 MAX_HISTORY_MESSAGES = 20
 
@@ -134,6 +133,7 @@ class VoiceAgent:
         # prompt. We rebuild the LLM here to keep it explicit.
         settings = load_settings()
         llm = ChatOpenAI(
+            model=settings.llm.model,
             openai_api_base=settings.llm.api_base,
             api_key=SecretStr("not-needed"),
             temperature=0.7,

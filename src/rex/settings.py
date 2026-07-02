@@ -29,6 +29,7 @@ class LLMSettings:
     """Settings related to LLM inference."""
 
     api_base: str = "http://localhost:1234/v1"
+    model: str = "gpt-3.5-turbo"
 
 
 @dataclass
@@ -74,6 +75,7 @@ def load_settings(settings_path: str | Path = "settings.toml") -> Settings:
     llm_data = data.get("llm", {})
     llm_settings = LLMSettings(
         api_base=llm_data.get("api_base", "http://localhost:1234/v1"),
+        model=llm_data.get("model", "gpt-3.5-turbo"),
     )
 
     listening_timeout_data = data.get("listening_timeout", 6.0)

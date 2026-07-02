@@ -7,6 +7,7 @@ def test_llm_api_base_defaults_to_localhost(tmp_path):
     settings = load_settings(tmp_path / "missing-settings.toml")
 
     assert settings.llm.api_base == "http://localhost:1234/v1"
+    assert settings.llm.model == "gpt-3.5-turbo"
 
 
 def test_llm_api_base_can_be_overridden(tmp_path):
@@ -15,6 +16,7 @@ def test_llm_api_base_can_be_overridden(tmp_path):
         """
 [llm]
 api_base = "http://example.test:4321/v1"
+model = "local-model"
 """,
         encoding="utf-8",
     )
@@ -22,3 +24,4 @@ api_base = "http://example.test:4321/v1"
     settings = load_settings(settings_path)
 
     assert settings.llm.api_base == "http://example.test:4321/v1"
+    assert settings.llm.model == "local-model"

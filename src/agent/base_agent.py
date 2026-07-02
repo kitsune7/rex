@@ -50,6 +50,7 @@ def create_agent(tools, checkpointer=None):
     """
     settings = load_settings()
     llm = ChatOpenAI(
+        model=settings.llm.model,
         openai_api_base=settings.llm.api_base,
         api_key=SecretStr("not-needed"),
         temperature=0.7,
