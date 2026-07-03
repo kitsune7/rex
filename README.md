@@ -1,6 +1,6 @@
 # rex
 
-A wake word detection system with speech recognition capabilities.
+A wake word detection system with speech recognition and voice assistant capabilities.
 
 ## Setup
 
@@ -9,34 +9,96 @@ A wake word detection system with speech recognition capabilities.
    uv sync
    ```
 
-2. **First-time model setup**:
-   The required openwakeword models (~15MB) will be automatically downloaded on first use. Alternatively, you can manually download them:
+2. **System dependencies** (macOS):
+   ```bash
+   brew install espeak-ng portaudio
+   ```
+
+3. **Configuration** — copy the example settings and edit as needed:
+   ```bash
+   cp settings.example.toml settings.toml
+   ```
+
+4. **First-time model setup** — openwakeword models (~15MB) download automatically on first use. To fetch them manually:
    ```bash
    uv run python -c "from openwakeword.utils import download_models; download_models()"
    ```
 
-3. Run `brew install espeak-ng portaudio` to get everything working.
-
 ## Usage
 
-### Test a pre-trained wake word model:
+### Voice assistant (local)
+
+Run the full Rex voice assistant on your machine:
+
 ```bash
-uv run wake_word test-pretrained wake_word_training_files/hey_recks.onnx
+uv run rex
 ```
 
-The command will start listening for the wake word. Speak clearly into your microphone to test detection.
+Press `Ctrl+C` to exit.
+
+### Laptop server
+
+Run the FastAPI/WebSocket server (used by the laptop client):
+
+```bash
+uv run rex-server
+```
+
+Options:
+- `--host` — bind address (default: `0.0.0.0`)
+- `--port` — port (default: `8765`)
+- `--reload` — enable auto-reload for development
+
+### Wake word tester
+
+Test wake word detection with your microphone:
+
+```bash
+uv run wake_word
+```
+
+Options:
+- `--model` — model name under `models/wake_word_models/` (default: `hey_rex`)
+- `--threshold` — detection sensitivity, 0.0–1.0 (default: `0.5`)
 
 Press `Ctrl+C` to stop listening.
 
-### Options:
-- `--threshold`: Detection sensitivity (0.0-1.0, default: 0.5)
-- `--chunk-size`: Audio chunk size in samples (default: 1280)
+## Development
+
+### Run tests
+
+```bash
+uv run pytest
+```
+
+Integration evals (require a running LLM at the configured `api_base`; skipped in normal CI runs):
+
+```bash
+uv run pytest src/tests/test_scenario_evals.py -m integration
+```
+
+Or use the standalone script (supports `REX_LLM_API_BASE` / `REX_LLM_MODEL` overrides):
+
+```bash
+uv run python scripts/run_integration_evals.py
+```
+
+See [docs/forge-proxy-experiment.md](docs/forge-proxy-experiment.md) for Forge proxy setup.
+
+### Lint and format
+
+```bash
+uv run ruff check
+uv run ruff format
+```
 
 ## Project Structure
 
-- `src/wake_word/` - Wake word detection implementation
-  - `cli.py` - Command-line interface
-  - `wake_word_listener.py` - Real-time wake word detection
-  - `model_utils.py` - Model management and auto-download
-- `wake_word_training_files/` - Custom trained wake word models
-
+- `src/rex/` — main voice assistant CLI and app wiring
+- `src/agent/` — LLM agent, tools, and evals
+- `src/server/` — FastAPI laptop server
+- `src/wake_word/` — wake word detection
+- `src/stt/` — speech-to-text
+- `src/tts/` — text-to-speech
+- `src/audio/` — audio capture and playback
+- `scripts/` — standalone utility scripts

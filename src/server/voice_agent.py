@@ -109,6 +109,7 @@ class VoiceAgent:
         self,
         timer_manager: TimerManager,
         reminder_manager: ReminderManager,
+        llm=None,
     ) -> None:
         set_timer, check_timers, stop_timer = create_timer_tools(timer_manager)
         create_reminder, list_reminders, update_reminder, delete_reminder = (
@@ -127,7 +128,7 @@ class VoiceAgent:
         ]
         self._checkpointer = MemorySaver()
 
-        llm = create_chat_model()
+        llm = llm or create_chat_model()
         use_interrupt = any(t.name in CONFIRMABLE_TOOLS for t in tools)
 
         self._agent = create_lc_agent(

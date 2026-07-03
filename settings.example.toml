@@ -2,5 +2,7 @@
 retry_minutes = 10
 
 [llm]
+# OpenAI-compatible inference endpoint. For Forge proxy mode, use http://localhost:8081/v1
+# See docs/forge-proxy-experiment.md
 api_base = "http://localhost:1234/v1"
 model = "claude-opus-4-8"

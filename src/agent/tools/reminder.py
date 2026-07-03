@@ -359,22 +359,32 @@ def parse_datetime(datetime_str: str) -> datetime | None:
     if "today" in modified:
         modified = modified.replace("today", now.strftime("%Y-%m-%d"))
 
+    has_explicit_time = False
+
     # Handle "noon" -> "12:00 pm"
+    before = modified
     modified = modified.replace(" noon", " 12:00 pm").replace("at noon", "at 12:00 pm")
     if modified == "noon":
         modified = "12:00 pm"
+    if modified != before:
+        has_explicit_time = True
 
     # Handle "midnight" -> "00:00"
+    before = modified
     modified = modified.replace(" midnight", " 00:00").replace("at midnight", "at 00:00")
     if modified == "midnight":
         modified = "00:00"
+    if modified != before:
+        has_explicit_time = True
 
     try:
         # Use dateutil parser with fuzzy matching for natural language
         parsed = dateutil_parser.parse(modified, fuzzy=True)
 
-        # Check if AM/PM was explicitly specified
-        has_explicit_ampm = any(marker in original for marker in ["am", "pm", "a.m", "p.m"])
+        # Check if AM/PM (or noon/midnight) was explicitly specified
+        has_explicit_ampm = has_explicit_time or any(
+            marker in original for marker in ["am", "pm", "a.m", "p.m"]
+        )
 
         if not has_explicit_ampm:
             # For ambiguous times, find the soonest future AM or PM interpretation

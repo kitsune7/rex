@@ -15,7 +15,7 @@ import uuid
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
