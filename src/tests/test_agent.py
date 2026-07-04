@@ -7,7 +7,13 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent import agent as agent_module
-from agent.agent import PendingConfirmation, confirm_tool_call, extract_text_response
+from agent.agent import (
+    MAX_HISTORY_MESSAGES,
+    PendingConfirmation,
+    _trim_message_history,
+    confirm_tool_call,
+    extract_text_response,
+)
 
 
 class TestExtractTextResponse:
@@ -63,6 +69,60 @@ class TestExtractTextResponse:
             ]
         }
         assert extract_text_response(response) == "Last message"
+
+
+def _tool_call_ai(call_id: str) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "check_timers", "args": {}, "id": call_id, "type": "tool_call"}
+        ],
+    )
+
+
+class TestTrimMessageHistory:
+    """History trimming must never orphan a tool result from its tool call."""
+
+    def test_short_history_is_returned_unchanged(self):
+        history = [HumanMessage(content="hi"), AIMessage(content="hello")]
+        assert _trim_message_history(history) is history
+
+    def test_never_starts_on_orphaned_tool_message(self):
+        # Build a history where a naive [-N:] slice would begin on a ToolMessage
+        # whose parent AIMessage(tool_calls=...) fell outside the window.
+        history: list = []
+        for turn in range(MAX_HISTORY_MESSAGES):
+            history.append(HumanMessage(content=f"user {turn}"))
+            history.append(_tool_call_ai(f"call_{turn}"))
+            history.append(ToolMessage(content="ok", tool_call_id=f"call_{turn}"))
+            history.append(AIMessage(content=f"done {turn}"))
+
+        trimmed = _trim_message_history(history)
+
+        assert len(trimmed) <= MAX_HISTORY_MESSAGES
+        assert isinstance(trimmed[0], HumanMessage)
+        # Every retained tool result has its matching tool call in the window.
+        call_ids = {
+            tc["id"]
+            for msg in trimmed
+            if isinstance(msg, AIMessage)
+            for tc in (msg.tool_calls or [])
+        }
+        for msg in trimmed:
+            if isinstance(msg, ToolMessage):
+                assert msg.tool_call_id in call_ids
+
+    def test_falls_back_to_dropping_leading_tool_messages(self):
+        # A window with no HumanMessage still must not begin on a tool result.
+        history = [
+            ToolMessage(content="orphan", tool_call_id="call_x")
+            for _ in range(MAX_HISTORY_MESSAGES + 2)
+        ]
+        history.append(AIMessage(content="summary"))
+
+        trimmed = _trim_message_history(history)
+
+        assert not isinstance(trimmed[0], ToolMessage)
 
 
 class TestConfirmToolCall:

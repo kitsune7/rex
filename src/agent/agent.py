@@ -16,8 +16,34 @@ from .tools import (
     tool_requires_confirmation,
 )
 
-# Maximum number of messages to keep in history to prevent unbounded growth
-MAX_HISTORY_MESSAGES = 20
+
+def _trim_message_history(messages: list, max_messages: int) -> list:
+    """Trim conversation history without splitting tool-call/result pairs.
+
+    A blind ``messages[-max_messages:]`` slice can start the retained window on
+    an orphaned ``ToolMessage`` whose parent ``AIMessage`` was dropped, leaving a
+    tool result with no matching tool call. OpenAI-compatible backends reject
+    such sequences, so the next model call fails.
+
+    To stay valid we keep the most recent ``max_messages`` messages, then move
+    the start of the window forward to the first user turn — always a safe
+    conversation boundary. If the window happens to contain no user turn
+    (unusual), we fall back to dropping any leading tool results.
+    """
+    if len(messages) <= max_messages:
+        return messages
+
+    window = messages[-max_messages:]
+
+    for index, message in enumerate(window):
+        if isinstance(message, HumanMessage):
+            return window[index:]
+
+    start = 0
+    while start < len(window) and isinstance(window[start], ToolMessage):
+        start += 1
+    return window[start:]
+
 
 # Cached agent instance and checkpointer
 _agent = None
@@ -149,7 +175,7 @@ def run_voice_agent(
         - updated_history includes the new user message and agent response
         - thread_id is the thread ID for potential continuation
     """
-    agent, checkpointer = _get_agent()
+    agent, _ = _get_agent()
     langfuse_handler = CallbackHandler()
 
     # Generate thread ID if not provided
@@ -207,8 +233,7 @@ def run_voice_agent(
     history.append(AIMessage(content=text_response))
 
     # Trim history if it gets too long (keep most recent messages)
-    if len(history) > MAX_HISTORY_MESSAGES:
-        history = history[-MAX_HISTORY_MESSAGES:]
+    history = _trim_message_history(history)
 
     return text_response, history, thread_id
 
@@ -281,7 +306,6 @@ def confirm_tool_call(
     history = list(final_state.values.get("messages", []))
 
     # Trim history if needed
-    if len(history) > MAX_HISTORY_MESSAGES:
-        history = history[-MAX_HISTORY_MESSAGES:]
+    history = _trim_message_history(history)
 
     return text_response, history
